@@ -1,0 +1,14 @@
+---
+title: "Exploratory Analysis"
+author: "Asger Svenning"
+date: "`r Sys.Date()`"
+output: 
+  prettydoc::html_pretty:
+  theme: cayman
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# TEST
