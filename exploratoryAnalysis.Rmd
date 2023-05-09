@@ -5,10 +5,501 @@ date: "`r Sys.Date()`"
 output: 
   prettydoc::html_pretty:
   theme: cayman
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(magrittr)
+library(tidyverse) %>% 
+  suppressPackageStartupMessages()
+library(ggforce)
+library(patchwork)
+library(ggnewscale)
+library(extrafont)
+library(ggpubr)
+library(kableExtra)
+library(bit)
+library(progress)
+c("symdiff", "xor") %>% 
+  sapply(function(x) conflicted::conflict_prefer(x, "bit", quiet = T)) %>% 
+  invisible()
+c("group_rows", "filter", "select") %>% 
+  sapply(function(x) conflicted::conflict_prefer(x, "dplyr", quiet = T)) %>% 
+  invisible()
+c("set_names", "set_colnames", "set_rownames") %>% 
+  sapply(function(x) conflicted::conflict_prefer(x, "magrittr", quiet = T)) %>% 
+  invisible()
+
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  message = FALSE, 
+  warning = FALSE, 
+  fig.width = 8, 
+  fig.height = 8, 
+  cache = T, 
+  dev.args = list(png = list(type = "cairo"))
+)
+
+theme_set(
+  theme_pubr(legend = "right", base_family = "CMU Serif") +
+    theme(title = element_text(face = "bold",
+                               size = 14),
+          strip.text = element_text(face = "bold",
+                                    size = 14),
+          plot.title = element_text(face = "plain",
+                                    size = 20,
+                                    hjust = .5),
+          aspect.ratio = 1)
+)
 ```
 
-# TEST
+# Import data
+Filter lengths for positive lengths, since negative lengths are impossible. Negative lengths are probably present due to underflow in the bioinformatics pipeline prior to this analysis.
+```{r}
+arch <- read_delim("ArchaicSegments.txt", delim = "\t") %>% 
+  filter(length > 0)
+
+init_plts <- arch %>% 
+  summarize(across(everything(), list)) %>% 
+  pivot_longer(everything(), names_to = "variable") %>% 
+  mutate(
+    plt = map2(variable, value, function(n, x) {
+      x <- unlist(x)
+      pl <- if (is.numeric(x)) {
+        tibble(x = x) %>% 
+          ggplot(aes(x)) +
+          geom_histogram(bins = 100) +
+          coord_cartesian(expand = F)
+      }
+      else {
+        nunique <- length(unique(x))
+        tibble(x = x) %>% 
+          ggplot(aes(y = x)) +
+          geom_bar() +
+          scale_x_continuous(expand = expansion()) +
+          scale_y_discrete(
+            labels = if (nunique > 20) function(x) replace(x, which(!(1:length(x) %in% floor(seq(1, length(x), length.out = 20)))), "") else function(x) x
+          )
+      }
+      
+      pl +
+        theme(plot.margin = margin(0,0,.2,.2, "cm")) +
+        labs(title  = n, x = NULL, y = NULL)
+    })
+  )
+```
+
+## Initial visualization of data variable distributions
+```{r, fig.height = 20, fig.width=15}
+init_plts %>% 
+  pull(plt) %>% 
+  wrap_plots(ncol = 3)
+```
+
+## Which populations are overrepresented
+```{r}
+arch %>% 
+  count(pop) %>% 
+  arrange(desc(n)) %>% 
+  slice_head(n = 5) %>% 
+  kable %>% 
+  kable_material(full_width = F)
+```
+
+# Questions
+
+## To what extent do individuals share SNPs contributed by archaic human introgression? In other words, how correlated are the archaic contents in two individuals?
+
+In order to do this analyses we first check if the segments align, which would simplify the analyses significantly.
+```{r, fig.height=8, fig.width=16}
+arch %>% 
+  filter(chrom == 1) %>% 
+  filter(start < 4*10^6) %>% 
+  group_by(pop) %>% 
+  filter(n() > 10) %>% 
+  ggplot(aes(start - length/2, name, width = length, fill = MeanProb)) +
+  geom_tile(height = 1) +
+  scale_fill_viridis_c(trans = "log10", option = "A") +
+  facet_wrap(~pop, ncol = 3, switch = "y", scales = "free_y") +
+  labs(x = "Genomic Position", y = "Individual", title = "Archaic Segments in a small\npart of Chromosome 1") +
+  theme(aspect.ratio = .5,
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())
+```
+
+Since the segments do not overlap we have to somehow efficiently measure their degree of similarity, the most naïve method would be to index would be a distance metric calculated between binary vectors of archaic/modern state for each position in e.g. a chromosome. An intuitive distance measure between such vectors would be the intersection over union, also called the Jaccard Index:
+
+$$d(x,y)=\frac{\sum\mathbf{1}_{x = 1\;\land\; y = 1}}{\sum\mathbf{1}_{x = 1\;\lor\; y = 1}}$$
+Which can be efficiently calculated using bitwise boolean operations. However we will still expect this to be prohibitive due to the memory footprint of binary vectors the size of the human genome. We therefore opt to approximate the binary archaic state vectors by dividing the indices of the archaic fragments by a relatively large constant (400) and randomly rounding it (un-biased rounding). By doing this we are able to reduce the memory usage by several orders of magnitude while not sacrificing much in terms of precision. Here we have focused on chromosome 1 somewhat arbitrarily 
+```{r}
+randomRound <- function(x) {
+  decimal_part <- x %% 1
+  integer_part <- floor(x)
+  integer_part + rbinom(length(x), 1, decimal_part)
+}
+
+encode_binary_vector <- function(start, end, length) {
+  vec <- bit(length = length)
+  
+  for (i in 1:length(start)) {
+    vec[start[i]:end[i]] <- T
+  }
+  
+  vec
+}
+
+person <- function(start, end, length) {
+  list(start = start, end = end, length = length)
+}
+
+person_dist <- function(p1, p2) {
+  p1_vec <- do.call(encode_binary_vector, p1)
+  p2_vec <- do.call(encode_binary_vector, p2)
+  
+  if (p1$length != p2$length) stop(paste("p1 and p2 does not have the same length attribute:", p1$length, "=/=", p2$length))
+  
+  1 - (sum(p1_vec & p2_vec)/sum(p1_vec | p2_vec))
+}
+
+person_pairwise_dist <- function(persons, labels = names(persons)) {
+  dmat <- matrix(NA, length(persons), length(persons))
+  colnames(dmat) <- labels
+  rownames(dmat) <- labels
+  for (i in 1:length(persons)) {
+    for (j in 1:length(persons)) {
+      if (i <= j) next
+      dmat[i,j] <- person_dist(persons[[i]], persons[[j]])
+    }
+  }
+  as.dist(dmat)
+}
+
+
+arch_approx <- arch %>% 
+  filter(chrom == "1") %>% 
+  mutate(across(c(start, end), ~randomRound(.x/400))) %>%
+  mutate(length = end - start) %>% 
+  filter(length > 0)
+
+x_chrom_end_range <- arch_approx %>%
+  pull(end) %>% 
+  range
+
+x_chrom_start_range <- arch_approx %>% 
+  pull(start) %>% 
+  range
+
+x_chrom_min <- x_chrom_start_range[1]
+x_chrom_max <- x_chrom_end_range[2] - x_chrom_min + 1
+
+arch_approx <- arch_approx %>%
+  mutate(across(c(start, end), ~.x - x_chrom_min + 1))
+
+arch_persons <- arch_approx %>% 
+  mutate(country = str_extract(country, "\\w+")) %>% 
+  group_by(name, pop, country, region) %>% 
+  summarize(
+    prs = list(person(start, end, x_chrom_max)),
+    .groups = "drop"
+  ) %>% 
+  mutate(prs = prs %>% 
+           set_names(name))
+
+country_sample_1_dmat <- arch_persons %>% 
+  group_by(country) %>%
+  slice_sample(n = 1) %>% 
+  ungroup %>% 
+  {person_pairwise_dist(.$prs, .$country)}
+
+country_to_region <- arch %>% 
+  distinct(country, region) %>% 
+  mutate(country = str_extract(country, "\\w+")) %>% 
+  group_by(country) %>% 
+  arrange(region) %>% 
+  slice_head(n = 1) %>% 
+  ungroup %>% 
+  {
+    set_names(.$region, .$country)
+  }
+
+library(ggnewscale)
+country_sample_1_dmat %>%
+  as.matrix() %>% 
+  as.data.frame() %>% 
+  rownames_to_column("pop1") %>% 
+  as_tibble %>%
+  pivot_longer(!pop1, names_to="pop2", values_to="iou") %>% 
+  mutate(reg1 = country_to_region[pop1],
+         reg2 = country_to_region[pop2]) %>% 
+  arrange(reg1, pop1, iou) %>% 
+  mutate(pop1 = factor(pop1, levels = unique(pop1)),
+         pop2 = factor(pop2, levels = levels(pop1))) %>% 
+  ggplot(aes(pop1,pop2,fill=iou)) +
+  geom_tile() +
+  scale_fill_viridis_c(trans = "log10", option = "A", na.value = "black", direction = -1,
+                       name = "1 - IoU", labels = scales::label_percent()) +
+  new_scale_fill() +
+  geom_tile(
+    aes(last(pop), pop, fill = region),
+    data = tibble(pop = names(country_to_region),
+                  region = unname(country_to_region)) %>%
+      arrange(region),
+    inherit.aes = F,
+    position = position_nudge(x = 1),
+    key_glyph = draw_key_point
+  ) +
+  scale_fill_manual(values = c("firebrick3", "magenta2", "cyan3", "darkorchid3", "darkolivegreen3"),
+                    name = "Region") +
+  guides(fill = guide_legend(override.aes = list(shape = 21,
+                                                 size = 15))) +
+  scale_x_discrete(expand = expansion(0, c(0, 1))) +
+  scale_y_discrete(expand = expansion()) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        panel.background = element_rect(fill = "gray65"),
+        legend.key.height = unit(3.5, "lines"),
+        legend.key.width = unit(4, "lines"),
+        legend.text = element_text(size = 16),
+        legend.title = element_text(hjust = .5,
+                                    size = 24),
+        legend.box = "horizontal")
+```
+
+## Within population variation
+```{r}
+within_pop_iou <- arch_persons %>% 
+  nest(persons = !c(pop, country, region)) %>% 
+  arrange(country) %>% 
+  filter(map_dbl(persons, nrow) > 2) %>% 
+  mutate(
+    mean_iou = map_dbl(persons, function(x) {
+      person_pairwise_dist(x$prs) %>% 
+        mean
+    }),
+    n = map_dbl(persons, nrow)
+  )
+
+within_pop_iou %>%
+  ggplot(aes(mean_iou, pop, color = country, label = n)) +
+  geom_point() +
+  geom_label(aes(x = 1)) +
+  facet_wrap(~region, scales = "free_y", ncol = 1) +
+  theme(aspect.ratio = .2)
+```
+
+```{r}
+bit_vec_iou <- function(v1, v2, r, useC = F) {
+  if (is.list(v1)) {
+    v1 <- do.call(encode_binary_vector, v1)
+  }
+  if (is.list(v2)) {
+    v2 <- do.call(encode_binary_vector, v2)
+  }
+  if (length(v1) != length(v2)) stop("v1 and v2 must be of exactly equal length.")
+  if (missing(r)) {
+    r <- c(1L, length(v1))
+  } else {
+    if (!is.integer(r)) {
+      r <- as.integer(r)
+      warning("r is not an integer! It has been coerced.")
+    }
+    r <- c(1L, r)
+  }
+  
+  iou <- if (useC) {
+    .Call(bit:::C_R_bit_sum, .Call(bit:::C_R_bit_and, v1, r[2], v2), r) /
+      .Call(bit:::C_R_bit_sum, .Call(bit:::C_R_bit_or, v1, r[2], v2), r)
+  } else {
+    sum(v1 & v2) / sum(v1 | v2)
+  }
+
+  iou
+}
+
+person_pairwise_dist_df <- function(df, col, ref, ...) {
+  persons <- df[[col]] 
+  labels <- names(persons)
+  vecs <- sapply(persons, function(x) do.call(encode_binary_vector, x))
+  dmat <- matrix(NA, length(persons), length(persons))
+  colnames(dmat) <- labels
+  rownames(dmat) <- labels
+  
+  pb <- progress_bar$new(
+    total = (length(persons) - 1) * length(persons) / 2,
+    clear = T, 
+    width = 100, 
+    format = "Calculating pairwise IoU [:bar] :percent eta: :eta")
+  
+  for (i in 1:length(persons)) {
+    person_i <- vecs[[i]]
+    for (j in 1:length(persons)) {
+      if (i <= j) next
+      person_j <- vecs[[j]]
+      dmat[i,j] <- 1 - bit_vec_iou(person_i, person_j, ...)
+      pb$tick()
+    }
+  }
+  
+  join1 <- ref
+  join2 <- ref
+  names(join1) <- paste0(col, "_", 1)
+  names(join2) <- paste0(col, "_", 2)
+  
+  as.dist(dmat) %>% 
+    as.matrix %>% 
+    as.data.frame %>% 
+    rownames_to_column(paste0(col, "_", 1)) %>% 
+    pivot_longer(!paste0(col, "_", 1), 
+                 names_to = paste0(col, "_", 2), 
+                 values_to = "iou") %>% 
+    full_join(
+      df %>%
+        select(!all_of(col)) %>% 
+        rename_with(function(x) ifelse(x == ref, x, paste0(x, "_", 1))),
+      by = join1
+    ) %>% 
+    full_join(
+      df %>% 
+        select(!all_of(col)) %>% 
+        rename_with(function(x) ifelse(x == ref, x, paste0(x, "_", 2))),
+      by = join2
+    )
+}
+
+all_dmat <- arch_persons %>%
+  person_pairwise_dist_df("prs", "name")
+```
+
+```{r}
+skip_labels <- function(n) function(x) replace(x, which(!(1:length(x) %in% floor(seq(1, length(x), length.out = n)))), "")
+
+prs_to_country <- all_dmat %>% 
+  distinct(country_1, prs_1) %>% 
+  {set_names(.$country_1, .$prs_1)}
+
+label_prs_to_country <- function(prs) {
+  country <- prs_to_country[prs] %>% 
+    unname
+  
+  country_boundary_ind <- c(1, which(country[1:(length(country) - 1)] != country[2:length(country)]))
+  
+  country_center_ind <- country_boundary_ind + 
+    (c(country_boundary_ind, length(country)) %>% 
+       diff %>% 
+       divide_by(2) %>% 
+       ceiling)
+  
+  country[-country_center_ind] <- "" # str_extract(country[-country_center_ind], ".")
+  # cat(paste0(country, collapse = "\n"))
+  country
+}
+
+all_dmat_plt <- all_dmat %>% 
+  # filter(country_1 == "Papua" & country_2 == "Papua") %>% 
+  arrange(region_1, country_1, pop_1, prs_1) %>%  
+  mutate(
+    country_1 = factor(country_1, unique(country_1)) %>% 
+      fct_shuffle,
+    country_2 = factor(country_2, levels(country_1)),
+    prs_1 = factor(prs_1, unique(prs_1)),
+    prs_2 = factor(prs_2, levels(prs_1))
+  ) %>% 
+  ggplot(aes(prs_1, prs_2, fill = iou, color = iou)) +
+  geom_tile() +
+  scale_fill_viridis_c(#trans = "log10",
+    option = "A",
+    direction = -1,
+    na.value = "gray75",
+    labels = scales::label_percent(),
+    name = "1 - IoU") +
+  scale_colour_viridis_c(#trans = "log10",
+    option = "A",
+    direction = -1,
+    na.value = "gray75",
+    labels = scales::label_percent()) +
+  new_scale_fill() +
+  geom_tile(aes(x = -4.5, y = ifelse(as.integer(prs_1) == 1, prs_2, NA), fill = as.integer(country_2), color = after_scale(fill)),
+            width = 10,
+            show.legend = F) +
+  geom_tile(aes(y = -4.5, x = ifelse(as.integer(prs_2) == 1, prs_1, NA), fill = as.integer(country_1), color = after_scale(fill)),
+            height = 10,
+            show.legend = F) +
+  scale_fill_distiller(palette = "Greys") +
+  scale_x_discrete(labels = label_prs_to_country, expand = expansion(0, c(10, 0))) +
+  scale_y_discrete(labels = label_prs_to_country, expand = expansion(0, c(10, 0))) +
+  coord_equal() +
+  guides(colour = guide_none()) +
+  theme(axis.ticks = element_blank(),
+        axis.text.x = element_text(hjust = 1,
+                                   angle = 90,
+                                   vjust = .1),
+        axis.text.y = element_text(vjust = .1),
+        axis.text = element_text(size = 6),
+        axis.title = element_blank(),
+        legend.title = element_text(hjust = .5,
+                                    size = 20),
+        legend.text = element_text(size = 14),
+        legend.key.width = unit(2, "lines"),
+        legend.key.height = unit(4, "lines"))
+
+ggsave("all_dmat.png", all_dmat_plt,
+       width = 16, height = 16, dpi = 400, scale = .5)
+```
+
+
+```{r}
+all_dmat %>% 
+    mutate(prs_1 = factor(prs_1),
+           prs_2 = factor(prs_2, levels = levels(prs_1))) %>% 
+    filter(as.integer(prs_1) < as.integer(prs_2)) %>% 
+    group_by(same_region = region_1 == region_2, region_1, region_2) %>% 
+    summarize(
+        iou = mean(iou)
+    ) %>% 
+    ggplot(aes(region_1, region_2, fill = iou)) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "A",
+                         direction = -1) +
+    coord_equal(expand = F) +
+    labs(fill = "1 - IoU") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          axis.title = element_blank(),
+          legend.title = element_text(hjust = .5,
+                                      size = 20),
+          legend.text = element_text(size = 14),
+          legend.key.width = unit(2, "lines"),
+          legend.key.height = unit(4, "lines"))
+```
+
+```{r}
+all_dmat %>% 
+  arrange(region_1) %>% 
+    mutate(prs_1 = factor(prs_1),
+           prs_2 = factor(prs_2, levels = levels(prs_1)),
+           country_1 = factor(country_1, unique(country_1)),
+           country_2 = factor(country_2, levels(country_1))) %>% 
+    filter(as.integer(prs_1) < as.integer(prs_2)) %>% 
+    group_by(same_country = country_1 == country_2, country_1, country_2) %>% 
+    summarize(
+        iou = mean(iou),
+        .groups = "drop"
+    ) %>% 
+  complete(country_1, country_2, fill = list(iou = NA)) %>% 
+    ggplot(aes(country_1, country_2, fill = iou)) +
+    geom_tile() +
+    scale_fill_viridis_c(option = "A",
+                         na.value = "gray75",
+                         direction = -1) +
+    coord_equal(expand = F) +
+    labs(fill = "1 - IoU") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.25),
+          axis.title = element_blank(),
+          legend.title = element_text(hjust = .5,
+                                      size = 20),
+          legend.text = element_text(size = 14),
+          legend.key.width = unit(2, "lines"),
+          legend.key.height = unit(4, "lines"))
+```
+
+
+

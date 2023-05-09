@@ -1,0 +1,16 @@
+tidyverse
+ggplot2
+tibble
+tidyr
+readr
+purrr
+dplyr
+stringr
+forcats
+magrittr
+ggforce
+patchwork
+extrafont
+ggpubr
+kableExtra
+bit
