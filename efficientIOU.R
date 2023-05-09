@@ -51,40 +51,6 @@ arch <- read_delim("ArchaicSegments.txt", delim = "\t") %>%
   filter(length > 0) %>% 
   mutate(chrom = factor(chrom, unique(chrom)[order(as.numeric(unique(chrom)))]))
 
-all_chrom_range <- arch %>%
-  group_by(chrom) %>% 
-  summarize(
-    start = min(start),
-    end = max(end),
-    .groups = "drop"
-  ) %>% 
-  arrange(chrom) %>% 
-  mutate(
-    length = end - start,
-    offset = lag(cumsum(length), default = 0) #- first(length)
-  )
-
-all_chrom_range %>%
-  mutate(chrom = as.integer(chrom)) %>%
-  mutate(nchrom = lead(chrom),
-         nstart = lead(start)) %>% 
-  ggplot() +
-  geom_segment(aes(chrom, start, xend = chrom, yend = end)) +
-  geom_segment(aes(chrom, end, xend = nchrom, yend = nstart)) +
-  scale_x_continuous(labels = levels(all_chrom_range$chrom), breaks = 1:length(levels(all_chrom_range$chrom)))
-
-all_chrom_summary <- all_chrom_range %>% 
-  summarize(across(!chrom, ~list(set_names(.x, chrom)))) %>% 
-  as.list %>% 
-  lapply(first)
-
-arch_approx <- arch %>% 
-  group_by(chrom) %>% 
-  mutate(across(c(start, end), ~.x - all_chrom_summary$start[first(chrom)] + all_chrom_summary$offset[first(chrom)] + 1)) %>%
-  mutate(across(c(start, end), ~randomRound(.x/4000))) %>%
-  mutate(length = end - start) %>% 
-  filter(length > 0)
-
 x_chrom_end_range <- arch_approx %>%
   pull(end) %>% 
   range
@@ -197,64 +163,3 @@ all_edges <- all_dmat %>%
          prs_2 = factor(prs_2, levels(prs_1))) %>% 
   transmute(from = as.integer(prs_1),
             to = as.integer(prs_2))
-
-arch_meta <- arch_persons %>% 
-  select(name, pop, country, region) %>% 
-  arrange(region) %>% 
-  mutate(country = factor(country, unique(country)))
-
-all_t_dmat <- all_dmat %>% 
-  arrange(country_1, country_2) %>% 
-  mutate(
-    prs_1 = factor(prs_1, unique(prs_1)),
-    prs_2 = factor(prs_2, levels(prs_1))
-  ) %>% 
-  # filter(region_1 != "Melanesia" & region_2 != "Melanesia") %>% 
-  select(prs_1, prs_2, iou) %>%
-  pivot_wider(id_cols = prs_1, names_from = prs_2, values_from = iou) %>%
-  set_rownames(.$prs_1) %>%
-  select(!prs_1) %>% 
-  as.matrix %>% 
-  as.dist
-
-all_tree <- all_t_dmat %>% 
-  hclust("ward.D2")  
-
-all_cluster <- cutree(all_tree, 6) %>% 
-  {
-    tibble(label = names(.),
-           cluster = unname(.))
-  }
-
-as_tbl_graph(all_tree) %>% 
-  left_join(all_cluster) %>% 
-  left_join(arch_meta, by = c(label = "name")) %>% 
-  ggraph() +
-  geom_edge_elbow(
-    position = position_nudge(y = .1)
-  ) +
-  geom_node_tile(aes(fill = factor(cluster), width = leaf),
-                 height = .05,
-                 color = "transparent") +
-  scale_fill_brewer(palette = "Set1") +
-  new_scale_fill() +
-  geom_node_tile(aes(fill = country, width = leaf),
-                 height = .05,
-                 color = "transparent",
-                 position = position_nudge(y = .1))
-
-
-all_t_dmat %>% 
-  princomp %>% 
-  extract2("scores") %>% 
-  as.data.frame() %>% 
-  rownames_to_column("prs") %>% 
-  # # umap %>% 
-  # # as.data.frame() %>% 
-  # set_colnames(c("U1", "U2")) %>% 
-  # rownames_to_column("prs") %>% 
-  as_tibble() %>% 
-  left_join(arch_meta, by = c(prs = "name")) %>% 
-  ggplot(aes(Comp.1, Comp.2, color = region)) +
-  geom_point() +
-  theme(aspect.ratio = 1)

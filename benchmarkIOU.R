@@ -193,15 +193,18 @@ prettify_scientific <- Vectorize(function(x) {
   if (is.na(x)) return(NA)
   if (!is.character(x)) x <- as.character(x)
   if (!str_detect(x, "e\\+|e\\-")) return(x)
-  if (str_detect(x, "e\\+")) {
-    latex2exp::TeX(paste0("$", str_replace(x, "1*e\\+", " \\\\cdot 10^{"),"}$"))
+  out <- if (str_detect(x, "e\\+")) {
+    paste0("$", str_replace(x, "1*e\\+", " \\\\cdot 10^{"),"}$")
   }
   else if (str_detect(x, "e\\-")) {
-    latex2exp::TeX(paste0("$", str_replace(x, "1*e\\-", " \\\\cdot 10^{-"),"}$"))
+    paste0("$", str_replace(x, "1*e\\-", " \\\\cdot 10^{-"),"}$")
   }
   else {
     stop("Invalid format!")
   }
+  print(out)
+  str_remove(out, "(?<=^\\$ )\\\\cdot") %>% 
+    latex2exp::TeX()
 })
 
 ls_comp %>% 
@@ -219,4 +222,4 @@ ls_comp %>%
   coord_cartesian(expand = F) +
   ggpubr::theme_pubr() +
   theme(title = element_text(face = "bold"),
-        plot.margin = margin(0,1,.25,0.1, "cm"))
+        plot.margin = margin(0,1,.25,0.2, "cm"))
