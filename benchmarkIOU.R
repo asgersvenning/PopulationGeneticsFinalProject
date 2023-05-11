@@ -188,25 +188,6 @@ ls_comp <- tibble(
       })
   )
 
-
-prettify_scientific <- Vectorize(function(x) {
-  if (is.na(x)) return(NA)
-  if (!is.character(x)) x <- as.character(x)
-  if (!str_detect(x, "e\\+|e\\-")) return(x)
-  out <- if (str_detect(x, "e\\+")) {
-    paste0("$", str_replace(x, "1*e\\+", " \\\\cdot 10^{"),"}$")
-  }
-  else if (str_detect(x, "e\\-")) {
-    paste0("$", str_replace(x, "1*e\\-", " \\\\cdot 10^{-"),"}$")
-  }
-  else {
-    stop("Invalid format!")
-  }
-  print(out)
-  str_remove(out, "(?<=^\\$ )\\\\cdot") %>% 
-    latex2exp::TeX()
-})
-
 ls_comp %>% 
   pivot_longer(!len, names_to = "type", values_to = "res") %>%
   unnest(res) %>% 
@@ -223,3 +204,5 @@ ls_comp %>%
   ggpubr::theme_pubr() +
   theme(title = element_text(face = "bold"),
         plot.margin = margin(0,1,.25,0.2, "cm"))
+
+

@@ -47,9 +47,47 @@ c("expand", "pack", "unpack") %>%
 source("IOUHelpers.R")
 
 arch <- read_delim("ArchaicSegments.txt", delim = "\t") %>% 
-  # filter(chrom == "1") %>%
+  # filter(chrom == "3") %>%
   filter(length > 0) %>% 
   mutate(chrom = factor(chrom, unique(chrom)[order(as.numeric(unique(chrom)))]))
+
+all_chrom_range <- arch %>%
+  group_by(chrom) %>% 
+  summarize(
+    start = min(start),
+    end = max(end),
+    .groups = "drop"
+  ) %>% 
+  arrange(chrom) %>% 
+  mutate(
+    length = end - start,
+    offset = lag(cumsum(length), default = 0) #- first(length)
+  )
+
+all_chrom_summary <- all_chrom_range %>% 
+  summarize(across(!chrom, ~list(set_names(.x, chrom)))) %>% 
+  as.list %>% 
+  lapply(first)
+
+all_chrom_range %>% 
+  mutate(across(c(start, end), ~.x - start + 1 + offset)) %>% 
+  mutate(chrom = as.integer(chrom)) %>%
+  mutate(nchrom = lead(chrom),
+         nstart = lead(start)) %>% 
+  ggplot() +
+  geom_segment(aes(chrom, start, xend = chrom, yend = end)) +
+  geom_segment(aes(chrom, end, xend = nchrom, yend = nstart)) +
+  scale_x_continuous(labels = levels(all_chrom_range$chrom), breaks = 1:length(levels(all_chrom_range$chrom)))
+
+
+arch_approx <- arch %>% 
+  # group_by(chrom) %>% 
+  # mutate(across(c(start, end), ~.x - all_chrom_summary$start[first(chrom)] + all_chrom_summary$offset[first(chrom)] + 1)) %>%
+  mutate(across(c(start, end), ~.x/10000),
+         start = ceiling(start),
+         end = floor(end)) %>%
+  mutate(length = end - start) %>% 
+  filter(length > 0)
 
 x_chrom_end_range <- arch_approx %>%
   pull(end) %>% 
@@ -80,7 +118,6 @@ all_dmat <- arch_persons %>%
   person_pairwise_dist_df("prs", "name")
 
 ### Create plot
-
 skip_labels <- function(n) function(x) replace(x, which(!(1:length(x) %in% floor(seq(1, length(x), length.out = n)))), "")
 
 prs_to_country <- all_dmat %>% 
@@ -163,3 +200,4 @@ all_edges <- all_dmat %>%
          prs_2 = factor(prs_2, levels(prs_1))) %>% 
   transmute(from = as.integer(prs_1),
             to = as.integer(prs_2))
+
