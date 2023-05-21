@@ -27,6 +27,7 @@ library(progress)
 library(conflicted)
 library(ggraph)
 library(tidygraph)
+library(ape)
 c("symdiff", "xor") %>% 
   sapply(function(x) conflict_prefer(x, "bit", quiet = T)) %>% 
   invisible()
@@ -42,11 +43,13 @@ c("expand", "pack", "unpack") %>%
 
 source("IOUHelpers.R")
 source("implicit_iou.R")
+source("miscHelpers.R")
 
 knitr::opts_chunk$set(
   echo = TRUE, 
   message = FALSE, 
-  warning = FALSE, 
+  warning = FALSE,
+  eval = F,
   fig.width = 8, 
   fig.height = 8, 
   cache = T, 
@@ -65,18 +68,69 @@ theme_set(
                                     hjust = .5),
           aspect.ratio = 1)
 )
-
-segment_type <- "unknown" %>% 
-  pmatch(c("Altai", "Denisova", "Vindija", "all", "neanderthal", "unknown"))
-if (segment_type == 4) segment_type <- 1:3
-if (segment_type == 5) segment_type <- c(1,3)
-if (segment_type == 6) segment_type <- 0
 ```
+
+# Hyperparameters
+```{r hyperParams}
+precomputed <- T
+
+segment_type <- "epas" %>% 
+  tolower %>% 
+  pmatch(c("altai", "denisova"   , "vindija", 
+           "known", "neanderthal", "unknown", 
+           "all"  , "altai_denisova", "epas1"))
+
+file_suffix <- c("_altai", 
+                 "_denisova", 
+                 "_vindija", 
+                 "_known", 
+                 "_neanderthal", 
+                 "_unknown", 
+                 "", 
+                 "_altaidenisova",
+                 "_epas1")[segment_type]
+
+figure_annotation <- str_remove(file_suffix, "^_") %>% 
+  str_replace("_", " & ") %>% 
+  tools::toTitleCase()
+
+if (figure_annotation == "Epas1") figure_annotation <- "EPAS1"
+
+
+precomputed <- if (precomputed != "force") file.exists(paste0("all_dmat", file_suffix, ".rds")) & precomputed else F
+
+epas1 <- F
+if (segment_type == 4) {
+  segment_type <- 1:3
+} else if (segment_type == 5) {
+  segment_type <- c(1,3)
+} else if (segment_type == 6) {
+  segment_type <- 0
+} else if (segment_type == 7) {
+  segment_type <- 0:3
+} else if (segment_type == 8) {
+  segment_type <- 1:2
+} else if (segment_type == 9) {
+  segment_type <- 0:3
+  epas1 <- T
+}
+
+chromosome <- "all"
+if (length(chromosome) == 1 && chromosome == "all") {
+  chromosome <- c(1:22, "X")
+} else if (is.numeric(chromosome)) {
+  chromosome <- as.character(chromosome)
+}
+
+downscale <- if (!epas1) 1000 else 1
+```
+
 
 # Import data
 Filter lengths for positive lengths, since negative lengths are impossible. Negative lengths are probably present due to underflow in the bioinformatics pipeline prior to this analysis.
-```{r readData}
-arch <- read_delim("ArchaicSegments.txt", delim = "\t") %>% 
+```{r readData, eval = TRUE}
+arch_raw <- read_delim("ArchaicSegments.txt", delim = "\t", show_col_types = F) %>% 
+  filter(chrom %in% chromosome) %>% 
   filter(length > 0) %>% 
   mutate(country = str_extract(country, "[\\w ]+")) %>% 
   nest(all = !c(region, country)) %>% 
@@ -85,58 +139,124 @@ arch <- read_delim("ArchaicSegments.txt", delim = "\t") %>%
     country = paste0(country, rep("_", n()), region),
     country = if (n() == 1) str_remove(country, "_.+") else country
   ) %>% 
-  ungroup() %>% 
-  unnest(all) %>% 
-  filter(length > 0) %>% 
+  ungroup %>%
+  unnest(all) %>%
+  # Prettier region, country and population names
+  mutate(
+    region = str_replace_all(region, "(?<!^)(?=[A-Z])", "-"),
+    across(c(country, pop), ~.x %>% 
+             str_replace("_", " (") %>% 
+             str_replace("(?<= \\([\\w]{1,25})(?=(\\s|$))", ")")
+    )
+  ) %>% 
   mutate(chrom = factor(chrom, unique(chrom)[order(as.numeric(unique(chrom)))])) %>% 
   mutate(
     primary_ancestry = apply(across(contains("Shared_with")), 1, which.max),
-    primary_ancestry = ifelse(rowSums(across(contains("Shared_with"))) < ceiling(snps/2), 0, primary_ancestry)
-  ) %>% 
+    primary_ancestry = ifelse(
+      rowSums(across(contains("Shared_with"))) < ceiling(snps/2), 
+      0, primary_ancestry
+    )
+  )
+
+arch <- arch_raw %>% 
   filter(primary_ancestry %in% segment_type)
+
+if (epas1) {
+  arch_person_sum <- arch %>% 
+    distinct(name, pop, country, region, .keep_all = T) %>% 
+    mutate(across(!c(name, pop, country, region), ~NA))
+  
+  arch <- arch %>% 
+    filter(chrom == "2" & between(start, 46293667-10^6, 46386697+10^6) & between(end, 46293667-10^6, 46386697+10^6)) %>% 
+    nest(dat = !name) %>%
+    mutate(name = factor(name, levels = arch_person_sum$name)) %>% 
+    complete(name) %>% 
+    mutate(dat = map2(dat, name, function(d, n) {
+      if (!is.null(d)) return(d)
+      
+      arch_person_sum[arch_person_sum$name == n, ] %>% 
+        select(!name)
+    })) %>% 
+    unnest(dat) %>% 
+    mutate(chrom = "2") %>% 
+    ungroup
+}
 ```
+
+```{r totalArchaicLength}
+arch_length_tot_plt <- arch %>% 
+    group_by(name, region) %>% 
+    summarize(
+        tot_len = sum(length)
+    ) %>% 
+    ggplot(aes(tot_len, fill = region)) +
+    geom_histogram(aes(color = after_scale(fill)),
+                   bins = 100,
+                   key_glyph = draw_key_point) +
+    scale_fill_brewer(palette = "Dark2") +
+    scale_x_continuous(labels = prettify_scientific,
+                       # breaks = seq(0, 350, 50) * 10^6
+                       ) +
+    coord_cartesian(expand = F) +
+    guides(fill = guide_legend(override.aes = list(shape = 21,
+                                                   size = 5))) +
+    theme(
+        aspect.ratio = .5,
+        legend.position = c(.75,.75),
+        legend.box.background = element_rect(colour = "black", linewidth = .5, linetype = "solid"),
+        legend.box.margin = margin(1,1,1,1)
+    ) +
+    labs(x = "Total Archaic Segment Length", y = NULL, fill = NULL)
+
+ggsave(paste0("arch_length_total", file_suffix, ".pdf"), align_legend(arch_length_tot_plt),
+       device = cairo_pdf,
+       width = 8, height = 4, scale = 1.25)
+```
+
+
 ## Segment Ancestry by population
-```{r}
-read_delim("ArchaicSegments.txt", delim = "\t") %>% 
-  filter(length > 0) %>% 
-  mutate(country = str_extract(country, "[\\w ]+")) %>% 
-  nest(all = !c(region, country)) %>% 
-  group_by(country) %>% 
-  mutate(
-    country = paste0(country, rep("_", n()), region),
-    country = if (n() == 1) str_remove(country, "_.+") else country
-  ) %>% 
-  ungroup() %>% 
-  unnest(all) %>% 
-  filter(length > 0) %>% 
-  mutate(chrom = factor(chrom, unique(chrom)[order(as.numeric(unique(chrom)))])) %>% 
-  mutate(
-    primary_ancestry = apply(across(contains("Shared_with")), 1, which.max),
-    primary_ancestry = ifelse(rowSums(across(contains("Shared_with"))) < ceiling(snps/2), 0, primary_ancestry)
-  ) %>% 
+```{r, eval=TRUE}
+arch_raw %>% 
   count(pop, primary_ancestry) %>% 
   group_by(pop) %>% 
-  mutate(n = n/sum(n),
-         n = scales::label_percent(2)(n)) %>% 
+  mutate(
+    n = n / sum(n),
+    n = scales::label_percent(.1)(n)
+  ) %>% 
   ungroup %>% 
   mutate(
     primary_ancestry = c("Unknown", "Altai", "Denisova", "Vindija")[primary_ancestry + 1]
   ) %>% 
-  pivot_wider(id_cols = pop, names_from = primary_ancestry, values_from = n) %>% 
-  kable() %>% 
-  kable_material(full_width = F)
+  pivot_wider(
+    id_cols = pop,
+    names_from = primary_ancestry,
+    values_from = n
+  ) %>% 
+  rename("Population" = "pop") %>%
+  kable("latex",
+        align = "rcccc") %>% 
+  kable_material(
+    latex_options = c("striped", "HOLD_position"),
+    full_width = F
+  ) %>% 
+  add_header_above(c("", "Proportion of Archaic Segments of Ancestry from:" = 4)) %>% 
+  write_lines("archaicAncestryPop.txt")
 ```
 
 
 ## Which populations are overrepresented
-```{r popRepresent}
+```{r popRepresent, eval=TRUE}
 arch %>% 
   distinct(name, pop) %>%
   count(pop) %>% 
   arrange(desc(n)) %>% 
   slice_head(n = 5) %>% 
-  kable %>% 
-  kable_material(full_width = F)
+  rename("Population" = "pop", "No. Individuals" = "n") %>%
+  kable("latex",
+        align = "rc") %>% 
+  kable_material(latex_options = c("striped", "HOLD_position"),
+                 full_width = F) %>% 
+  write_lines("noIndividInPop.txt")
 ```
 
 # Questions
@@ -145,17 +265,100 @@ arch %>%
 
 In order to do this analyses we first check if the segments align, which would simplify the analyses significantly.
 ```{r segmentViz, fig.height=8, fig.width=16}
-arch %>% 
-  filter(chrom == "10") %>%
-  ggplot(aes(start - length/2, name, width = length)) +
-  geom_tile(height = 1, fill = "black") +
-  scale_fill_viridis_c(trans = "log10", option = "A") +
-  scale_x_continuous(labels = prettify_scientific,
-                     n.breaks = 10) +
-  labs(x = "Genomic Position", y = "Individual", title = "Archaic Segments in a small\npart of Chromosome 10") +
+arch_segment_plt <- arch %>%
+  filter(chrom == ifelse(epas1, "2", "10") & !(is.na(start) & epas1)) %>%
+  mutate(
+    # Shared_with_Neanderthal = pmin(1, Shared_with_Altai / snps)
+    AltaiDenisova = Shared_with_Altai / Shared_with_Denisova
+    # propDenisova = Shared_with_Denisova / snps
+  ) %>% 
+  arrange(region) %>% 
+  mutate(name = as.integer(factor(name, unique(name))),
+         region = factor(region)) %>%
+  group_by(name) %>%
+  arrange(start) %>% 
+  mutate(first = row_number() == 1) %>% 
+  ungroup %>% 
+  ggplot(aes(xmin = start, 
+             xmax = end, 
+             ymin = name, 
+             ymax = name + 1,
+             fill = MeanProb)) +
+  
+  geom_rect(
+    linewidth = 0
+  ) +
+  
+  scale_fill_viridis_c(
+    option = "A",
+    direction = 1,
+    # name = "Altai / Denisova",
+    name = "Probability\nof\nArchaic Ancestry",
+    limits = c(0, 1),
+    breaks = seq(0, 1, .1),
+    labels = scales::label_percent(),
+    guide = guide_colorbar(
+      barheight = unit(15, "lines"),
+      barwidth = unit(3, "lines"),
+      
+    )
+  ) +
+  
+  new_scale_fill() +
+  
+  geom_rect(
+    aes(xmin = ifelse(start, min(start, na.rm = T), NA) - 10^5, 
+        xmax = min(start),
+        fill = region,
+        color = after_scale(fill)),
+    key_glyph = draw_key_point,
+    linewidth = .3,
+  ) +
+  
+  scale_fill_brewer(
+    palette = "Dark2", 
+    name = "Geographic\nRegion",
+    guide = guide_legend(
+    override.aes = list(shape = 21,
+                        size = 10))
+  ) +
+  
+  scale_x_continuous(
+    labels = prettify_scientific,
+    n.breaks = 10
+  ) +
+  coord_cartesian(expand = F) +
+  labs(x = "Genomic Position", y = "Individual (not shown)") + 
+       # title = if (epas1) "Archaic Segments in a 1Mb window around EPAS1" else "Archaic Segments in Chromosome 10") +
   theme(aspect.ratio = .5,
         axis.text.y = element_blank(),
-        axis.ticks.y = element_blank())
+        axis.ticks.y = element_blank(),
+        legend.text = element_text(size = 12),
+        title = element_text(size = 18),
+        plot.title = element_text(size = 32),
+        panel.background = element_rect(fill = "#000004FF")
+        )
+
+if (epas1) {
+  epas_nindiv <- arch %>%
+    filter(chrom == ifelse(epas1, "2", "10") & !(is.na(start) & epas1)) %>% 
+    pull(name) %>% 
+    unique %>% 
+    length
+  
+  arch_segment_plt <- arch_segment_plt + 
+    geom_vline(xintercept = c(46293667, 46386697),
+               color = "red") +
+    annotate(
+      "rect", xmin = 46293667, xmax = 46386697,
+      ymin = 1, ymax = epas_nindiv,
+      fill = "#FF000033"
+    )
+}
+
+ggsave(paste0("arch_segment", file_suffix, ".pdf"), align_legend(arch_segment_plt),
+       device = cairo_pdf,
+       width = 8, height = 3.75, scale = 2)
 ```
 
 Since the segments do not overlap we have to somehow efficiently measure their degree of similarity, the most naïve method would be to index would be a distance metric calculated between binary vectors of archaic/modern state for each position in e.g. a chromosome. An intuitive similarity measure between such vectors would be the intersection over union, also called the Jaccard Index, both of these have a complementary dissimilarity measure:
@@ -177,7 +380,7 @@ I suggest six rather straight-forward rounding methods:
 
 the first three are perhabs the most naïve; "Ceiling", "Floor" and "Round". In these three methods we simply round both the start and end indices the same way: either up, down or to the closest integer. The next three methods are slightly more complicated. 
 
-In the "Random" method I still use the same method on both the start and end index. First the number is split into it's integer, $x_Z$, and decimal, $X_R$, parts and then the decimal part is sampled as a Bernoulli variable, and the final rounded number, $X_{\mathrm{round}}$ is then the sum of these such that: $X_{\mathrm{round}}=X_Z+\mathrm{B}(1,X_R)$. 
+In the "Random" method I still use the same method on both the start and end index. First the number is split into it's integer, $x_Z$, and decimal, $X_R$, parts and then the decimal part is sampled as a Bernoulli variable, and the final rounded number, $X_{\mathrm{round}}$ is then the sum of these such that: $X_{\mathrm{round}} \sim X_Z+\mathrm{B}(1,X_R)$. 
 
 The last two methods treat the start and end indices differently:
 The "Expand" method <i>expands</i> the rounded intervals by rounding the start index down and the end index up. The "Contract" method <i>contracts</i> the rounded intervals by doing the opposite of the "Expand" method; rounding the start index up and the end index down. 
@@ -196,8 +399,8 @@ Before doing analyses, I offset the genomic positions of the segments such that 
 all_chrom_range <- arch %>%
   group_by(chrom) %>% 
   summarize(
-    start = min(start),
-    end = max(end),
+    start = min(start, na.rm = T),
+    end = max(end, na.rm = T),
     .groups = "drop"
   ) %>% 
   arrange(chrom) %>% 
@@ -221,6 +424,7 @@ all_chrom_range %>%
   mutate(chrom = as.integer(chrom)) %>%
   mutate(nchrom = lead(chrom),
          nstart = lead(start)) %>% 
+  mutate(across(where(is.numeric), ~.x / downscale)) %>% 
   ggplot() +
   geom_segment(aes(chrom, start, xend = chrom, yend = end)) +
   geom_segment(aes(chrom, end, xend = nchrom, yend = nstart)) +
@@ -229,27 +433,32 @@ all_chrom_range %>%
 
 arch_approx <- arch %>% 
   group_by(chrom) %>%
-  mutate(across(c(start, end), ~.x - 
-                  all_chrom_summary$start[as.character(first(chrom))] + 
-                  all_chrom_summary$offset[as.character(first(chrom))] + 
-                  1)) %>%
+  mutate(
+    across(c(start, end), ~
+             .x 
+             - all_chrom_summary$start[as.character(first(chrom))] 
+             + all_chrom_summary$offset[as.character(first(chrom))] 
+             + 1)
+  ) %>%
   ungroup %>% 
-  mutate(across(c(start, end), ~.x/30000),
-         start = ceiling(start),
-         end = floor(end)) %>%
+  mutate(
+    across(c(start, end), ~.x / downscale),
+    start = ceiling(start),
+    end = floor(end)
+  ) %>%
   mutate(length = end - start) %>% 
-  filter(length > 0)
+  filter(length > 0 | (is.na(start) & is.na(end)))
 ```
 
 I then combine all segments in each individual into a pseudo-class which is essentially a custom data structure, such that I can use custom-made functions that work on said data structure.
 ```{r preparePersons}
 x_chrom_end_range <- arch_approx %>%
   pull(end) %>% 
-  range
+  range(na.rm = T)
 
 x_chrom_start_range <- arch_approx %>% 
   pull(start) %>% 
-  range
+  range(na.rm = T)
 
 x_chrom_min <- x_chrom_start_range[1]
 x_chrom_max <- x_chrom_end_range[2] - x_chrom_min + 1
@@ -259,6 +468,7 @@ arch_approx <- arch_approx %>%
 
 arch_persons <- arch_approx %>% 
   group_by(name, pop, country, region) %>% 
+  arrange(start, end) %>% 
   summarize(
     prs = list(person(start, end, x_chrom_max)),
     .groups = "drop"
@@ -272,95 +482,178 @@ Now that the data is prepared in a suitable data structure I can perform my anal
 ## Pairwise $d_\mathrm{IoU}$
 I then move on to using the full pairwise distance matrix, this would not be feasible without the explained optimizations. However using the methods described this can be done in a matter of seconds-to-minutes.
 ```{r pairDIoU}
-time_used <- system.time(
-  all_dmat <- arch_persons %>%
-              # slice_sample(n = 50) %>%
-  person_pairwise_dist_df("prs", "name", implicit = F)
-)
+if (precomputed) {
+  all_dmat <- readRDS(paste0("all_dmat", file_suffix, ".rds"))
+} else {
+  time_used <- system.time(
+    all_dmat <- arch_persons %>%
+      # slice_sample(n = 25) %>% 
+      mutate(prs = trim_non_overlapping_regions(prs)) %>%
+      person_pairwise_dist_df("prs", "name", implicit = F)
+  )
+  
+  saveRDS(all_dmat, paste0("all_dmat", file_suffix, ".rds"))
+}
 ```
+
+```{r}
+iou_hist <- all_dmat %>% 
+  mutate(
+    prs_1 = factor(prs_1),
+    prs_2 = factor(prs_2, levels(prs_1))
+  ) %>% 
+  filter(as.integer(prs_1) < as.integer(prs_2)) %>% 
+  mutate(
+    region_type = ifelse(region_1 == region_2, region_1, "between"),
+    region_type = factor(region_type, c(sort(unique(region_1)), "between"))
+  ) %>% 
+  ggplot(aes(1 - iou#, 
+             # fill = region_type,
+             # color = after_scale(fill)
+             )) +
+  geom_histogram(colour = "gray35") +
+  # stat_bin(bins = 50,
+  #            # linewidth = 0.1,
+  #            position = "identity",
+  #            key_glyph = draw_key_point,
+  #            geom = "col") +
+  # scale_fill_brewer(palette = "Dark2") +
+  scale_y_log10(n.breaks = 10,
+                labels = prettify_scientific) +
+  scale_x_continuous(labels = scales::label_percent()) +
+  coord_cartesian(expand = F, xlim = c(0, 1)) +
+  labs(x = "Intersection over Union", y = NULL) +
+  guides(
+    fill = guide_legend(
+      override.aes = list(
+        shape = 16,
+        size = 5
+      ),
+      ncol = 3
+    )
+  ) +
+  theme(aspect.ratio = .33,
+        panel.grid.major.y = element_line(colour = "gray80", linetype = "dashed", linewidth = .5),
+        # plot.margin = margin(1),
+        legend.title = element_blank(),
+        legend.text = element_text(size = 8),
+        legend.box.background = element_rect(colour = "black", linetype = "solid", linewidth = 1),
+        legend.position = c(.625, .725),
+        plot.margin = margin(2, 5, 0, 0, "mm"))
+
+ggsave(paste0("iou_hist", file_suffix, ".pdf"), iou_hist,
+       device = cairo_pdf, antialias = "subpixel",
+       width = 4, height = 1.5, dpi = 400, scale = 1.5)
+```
+
 
 And the full pairwise $d_\mathrm{IoU}$ matrix is computed in only `r time_used[3]` seconds. The distance matrix is visualized below:
 
 ```{r allPairDMat, fig.width = 12, fig.height = 12}
-### Create plot
-skip_labels <- function(n) function(x) replace(x, which(!(1:length(x) %in% floor(seq(1, length(x), length.out = n)))), "")
-
+# person to country "dictonary" / map
 prs_to_country <- all_dmat %>% 
   distinct(country_1, prs_1) %>% 
   {set_names(.$country_1, .$prs_1)}
 
-label_prs_to_country <- function(prs) {
-  country <- prs_to_country[prs] %>% 
-    unname
-  
-  country_boundary_ind <- c(1, which(country[1:(length(country) - 1)] != country[2:length(country)]))
-  
-  country_center_ind <- country_boundary_ind + 
-    (c(country_boundary_ind, length(country)) %>% 
-       diff %>% 
-       divide_by(2) %>% 
-       ceiling)
-  
-  country[-country_center_ind] <- ""
-  country
+if (epas1) {
+  epas_set <- arch_persons$prs %>% 
+    sapply(function(x) sapply(x, function(y) any(is.na(y)))) %>% 
+    colSums() %>% 
+    equals(0) %>% 
+    {names(.)[.]}
+} else {
+  epas_set <- c()
 }
 
-all_dmat_plt <- all_dmat %>% 
-  # filter(country_1 == "Papua" & country_2 == "Papua") %>% 
-  arrange(region_1, country_1, pop_1, prs_1) %>%  
+# Create heatmap of the entire pairwise dIoU matrix
+all_dmat_plt <- all_dmat %>%
+  filter(!epas1 | (prs_1 %in% epas_set & prs_2 %in% epas_set)) %>% 
+  # Ensure that individuals are ordered by region and country in the plot
+  arrange(region_1, region_2, country_1, country_2, pop_1, pop_2, prs_1, prs_2) %>%  
   mutate(
-    country_1 = factor(country_1, unique(country_1)) %>% 
-      fct_shuffle,
-    country_2 = factor(country_2, levels(country_1)),
-    prs_1 = factor(prs_1, unique(prs_1)),
-    prs_2 = factor(prs_2, levels(prs_1))
+    across(contains("_1"), 
+           ~ factor(.x, unique(.x))),
+    across(contains("_2"), 
+           ~ factor(.x, levels(unlist(pick(paste0(str_extract(cur_column(), ".+(?=_[12]$)"), "_1")))))),
+    country_fill_1 = RColorBrewer::brewer.pal(5, "Dark2")[as.integer(region_1)],
+    country_fill_2 = RColorBrewer::brewer.pal(5, "Dark2")[as.integer(region_2)],
+    country_fill_1 = ifelse(as.integer(country_1) %% 2 == 1, colorspace::lighten(country_fill_1, .5), country_fill_1),
+    country_fill_2 = ifelse(as.integer(country_2) %% 2 == 1, colorspace::lighten(country_fill_2, .5), country_fill_2)
   ) %>% 
+  # Remove diagonal
   mutate(iou = ifelse(prs_1 == prs_2, NA, iou)) %>% 
-  ggplot(aes(prs_1, prs_2, fill = iou, color = iou)) +
-  geom_tile() +
-  scale_fill_viridis_c(#trans = "log10",
+  ggplot() +
+  # dIoU heatmap tiles
+  geom_tile(
+    aes(x = prs_1, 
+        y = prs_2, 
+        fill = iou,
+        color = iou),
+    # linewidth = 0
+  ) +
+  # dIoU color map
+  scale_fill_viridis_c(
     option = "A",
     direction = -1,
     na.value = "gray75",
     labels = scales::label_percent(),
-    name = "1 - IoU") +
-  scale_colour_viridis_c(#trans = "log10",
+    name = latex2exp::TeX("$d_{IoU}$")) +
+  scale_color_viridis_c(
     option = "A",
     direction = -1,
     na.value = "gray75",
-    labels = scales::label_percent()) +
+    guide = "none") +
+  # Reset color map
   new_scale_fill() +
-  geom_tile(aes(x = -4.5, y = ifelse(as.integer(prs_1) == 1, prs_2, NA), fill = factor(as.integer(country_2) %% 2), color = after_scale(fill)),
-            width = 10,
-            show.legend = F) +
-  geom_tile(aes(y = -4.5, 
-                x = ifelse(as.integer(prs_2) == 1, prs_1, NA), 
-                fill = factor(as.integer(country_1) %% 2), 
-                color = after_scale(fill)),
-            height = 10,
-            show.legend = F) +
-  scale_fill_manual(values = c("gray35", "gray85")) +
-  scale_x_discrete(labels = label_prs_to_country, expand = expansion(0, c(10, 0))) +
-  scale_y_discrete(labels = label_prs_to_country, expand = expansion(0, c(10, 0))) +
+  # Country axis annotations
+  geom_tile(
+    aes(x = -4.5, 
+        y = ifelse(as.integer(prs_1) == 1, prs_2, NA), 
+        fill = country_fill_2,
+        color = after_scale(fill)),
+    linewidth = 0,
+    width = 10,
+    show.legend = F
+  ) +
+  geom_tile(
+    aes(y = -4.5, 
+        x = ifelse(as.integer(prs_2) == 1, prs_1, NA), 
+        fill = country_fill_1,
+        color = after_scale(fill)),
+    linewidth = 0,
+    height = 10,
+    show.legend = F
+  ) +
+  # Country color indicators
+  scale_fill_identity() +
+  scale_x_discrete(
+    labels = function(x) str_remove(label_grouped_axis(map = prs_to_country, 10)(x), "\\(.+"), 
+    expand = expansion(0, c(10, 0))) +
+  scale_y_discrete(
+    labels = function(x) str_remove(label_grouped_axis(map = prs_to_country, 10)(x), "\\(.+"),
+    expand = expansion(0, c(10, 0))) +
+  # Ensure that distance matrix is square
   coord_equal() +
-  guides(colour = guide_none()) +
-  theme(axis.ticks = element_blank(),
-        axis.text.x = element_text(hjust = 1,
-                                   angle = 90,
-                                   vjust = .1),
-        axis.text.y = element_text(vjust = .1),
-        axis.text = element_text(size = 6),
-        axis.title = element_blank(),
-        legend.title = element_text(hjust = .5,
-                                    size = 20),
-        legend.text = element_text(size = 14),
-        legend.key.width = unit(2, "lines"),
-        legend.key.height = unit(4, "lines"))
+  # Styling
+  theme(
+    axis.ticks = element_blank(),
+    axis.text.x = element_text(hjust = 1,
+                               angle = 90,
+                               vjust = .1),
+    axis.text.y = element_text(vjust = .1),
+    axis.text = element_text(size = 8),
+    axis.title = element_blank(),
+    legend.title = element_text(hjust = .5,
+                                size = 20),
+    legend.text = element_text(size = 14),
+    legend.key.width = unit(2, "lines"),
+    legend.key.height = unit(4, "lines")
+  )
 
 # all_dmat_plt
-ggsave("all_dmat.pdf", all_dmat_plt,
-       device = cairo_pdf,
-       width = 16, height = 16, dpi = 400, scale = .5)
+ggsave(paste0("all_dmat", file_suffix, ".pdf"), align_legend(all_dmat_plt),
+       device = cairo_pdf, antialias = "subpixel",
+       width = 8, height = 7, dpi = 300, scale = 1)
 # all_dmat_plt
 ```
 \begin{figure}
@@ -373,87 +666,293 @@ The distance matrix can be summarized for:
 ## Within population variation
 The first analysis I perform is an investigation into the within-population shared archaic ancestry.
 ```{r withinPopDIoU}
-lower_tri_base_width <- Vectorize(function(area) {
-  if (is.na(area) | is.null(area)) return(NA)
-  new_tri_area <- 0
-  new_base <- 0
-  while (new_tri_area < area) {
-    new_base <- new_base + 1
-    new_tri_area <- new_tri_area + new_base
-  }
-  new_base
-}, USE.NAMES = F, SIMPLIFY = T)
+# Helper function for calculating the side length of a lower triangle from its area:
+#   y = x^2/2 -x/2 
+#   -> 1/2 x^2 - 1/2 x - y 
+#   -> x = (1/2 +/- sqrt(1/4 - 4 * 1/2 * -y))/(2 * 1/2)
+#   -> x = 1/2 +/- sqrt(1/4 + 2y)
+#   -> x = 1/2 + sqrt(1/4 + 2y)
+lower_tri_base_width <- function(area) 1/2 + sqrt(1/4 + 2 * area)
 
 within_pop_iou <- all_dmat %>% 
-  filter(pop_1 == pop_2) %>% 
+  # Filter only comparisons within populations
+  # filter(pop_1 == pop_2) %>% 
   mutate(
     prs_1 = factor(prs_1),
-    prs_2 = factor(prs_2, levels(prs_1))
+    prs_2 = factor(prs_2, levels(prs_1)),
+    pop_1 = ifelse(pop_1 == pop_2, pop_1, "Between"),
+    region_1 = factor(ifelse(pop_1 == "Between", "Between", region_1), c(sort(unique(region_1)), "Between"))
   ) %>% 
+  # Filter lower triangle of pairwise dIoU matrix
   filter(as.integer(prs_1) < as.integer(prs_2)) %>% 
   rename("region" = "region_1", "country" = "country_1", "pop" = "pop_1") %>% 
   group_by(pop) %>% 
-  filter(n() > 2) %>% 
-  mutate(n = ifelse(row_number() == 1, n(), NA),
-         n = lower_tri_base_width(n) + 1) %>% 
+  # filter(sum(!is.na(iou)) > 2) %>% 
+  # (Stupid) way to calculate number of individuals, 
+  # could be replaced by length(unique(c(prs_1,prs_2)))
+  # mutate(n = ifelse(row_number() == 1, n(), NA),
+  #        n = lower_tri_base_width(n)) %>% 
+  mutate(n = ifelse(row_number() == 1, length(unique(c(prs_1,prs_2))), NA)) %>% 
   ungroup %>% 
-  mutate(region = str_replace_all(region, "(?<!^)(?=[A-Z])", "-")) %>% 
+  # Sort population by region in plot
   arrange(region, country, pop) %>% 
   mutate(across(c(country, pop), ~factor(.x, unique(.x)))) %>%
-  ggplot(aes(iou, pop, fill = region, label = n)) +
-  geom_violin(scale = "width",
-              key_glyph = draw_key_point) +
-  geom_text(aes(x = 1),
-            hjust = 1,
-            vjust = 1.1,
-            fontface = "bold",
-            family = "CMU Serif",
-            size = 6) +
-  scale_x_continuous(expand = expansion(0, c(0, 0)),
-                     limits = 0:1,
-                     labels = scales::label_percent()) +
-  guides(fill = guide_legend(override.aes = list(shape = 21,
-                                                 size = 10,
-                                                 stroke = 1))) +
+  ggplot(aes(x = iou, 
+             y = pop, 
+             fill = region, 
+             label = n)) +
+  geom_boxplot(
+    key_glyph = draw_key_point,
+    linewidth = .4,
+  ) +
+  # geom_violin(
+  #   scale = "width",
+  #   key_glyph = draw_key_point,
+  #   linewidth = .4
+  # ) +
+  # Individual count labels for populations
+  geom_text(
+    aes(x = 1),
+    hjust = 1,
+    vjust = .5,
+    position = position_nudge(x = .035),
+    fontface = "bold",
+    family = "CMU Serif",
+    size = 4
+  ) +
+  scale_x_continuous(labels = scales::label_percent()) +
   scale_fill_brewer(palette = "Dark2") +
-  labs(x = latex2exp::TeX("$d_{IoU}$"),
-       y = NULL,
-       fill = "Geographical\nRegion") +
-  theme(legend.text = element_text(size = 14),
-        axis.text.y = element_text(hjust = 0),
-        axis.title.x = element_text(margin = margin(1, 0, 0, 0, "lines")),
-        axis.ticks = element_blank(),
-        title = element_text(size = 20),
-        panel.grid.major.y = element_line(colour = "gray75", linewidth = .5, linetype = "dashed"))
+  # Styling
+  guides(
+    fill = guide_legend(
+      override.aes = list(shape = 21,
+                          size = 7,
+                          stroke = 1)
+    )
+  ) +
+  coord_cartesian(
+    clip = "off",
+    expand = F,
+    xlim = 0:1
+  ) +
+  labs(
+    x = latex2exp::TeX("$d_{IoU}$"),
+    y = NULL,
+    fill = "Geographical\nRegion"
+  ) +
+  theme(
+    legend.text = element_text(size = 11),
+    axis.text.y = element_text(hjust = 0),
+    axis.title.x = element_text(margin = margin(1, 0, 0, 0, "lines")),
+    axis.ticks = element_blank(),
+    title = element_text(size = 16),
+    panel.grid.major.y = element_line(colour = "gray75", linewidth = .25, linetype = "dashed"),
+    legend.box.margin = margin(1,1,1,1, "lines"),
+    legend.box.background = element_rect(colour = "black", linetype = "solid", linewidth = .55),
+    aspect.ratio = 1.5,
+    legend.position = c(.2, .875),
+    plot.margin = margin(0,30,0,0)
+  )
 
-ggsave("within_pop_iou.pdf", within_pop_iou,
+ggsave(paste0("within_pop_iou", file_suffix, ".pdf"), align_legend(within_pop_iou),
        device = cairo_pdf,
-       width = 5.5, height = 4, scale = 2.5)
-# within_pop_iou
+       width = 4.75, height = 6.25, scale = 2.5)
 ```
-\begin{figure}
-  \includegraphics[width=\textwidth]{within_pop_iou.pdf}
-\end{figure}
+
+
+```{r withinCountryDIoU}
+within_country_iou <- all_dmat %>% 
+  # Filter only comparisons within populations
+  # filter(country_1 == country_2) %>% 
+  mutate(
+    prs_1 = factor(prs_1),
+    prs_2 = factor(prs_2, levels(prs_1)),
+    country_1 = factor(ifelse(country_1 == country_2, country_1, "Between"), c(sort(unique(country_1)), "Between")),
+    region_1 = factor(ifelse(country_1 == "Between", "Between", region_1), c(sort(unique(region_1)), "Between"))
+  ) %>% 
+  # Filter lower triangle of pairwise dIoU matrix
+  filter(as.integer(prs_1) < as.integer(prs_2)) %>% 
+  rename("region" = "region_1", "country" = "country_1", "pop" = "pop_1") %>% 
+  group_by(country) %>% 
+  # filter(sum(!is.na(iou)) > 2) %>% 
+  # (Stupid) way to calculate number of individuals, 
+  # could be replaced by length(unique(c(prs_1,prs_2)))
+  # mutate(n = ifelse(row_number() == 1, n(), NA),
+  #        n = lower_tri_base_width(n)) %>% 
+  mutate(n = ifelse(row_number() == 1, length(unique(c(prs_1,prs_2))), NA)) %>% 
+  ungroup %>% 
+  # Sort population by region in plot
+  arrange(region, country, pop) %>% 
+  mutate(across(c(country, pop), ~factor(.x, unique(.x)))) %>%
+  ggplot(aes(x = iou, 
+             y = country, 
+             fill = region, 
+             label = n)) +
+    geom_boxplot(
+    key_glyph = draw_key_point,
+    linewidth = .4,
+  ) +
+  # geom_violin(
+  #   scale = "width",
+  #   key_glyph = draw_key_point
+  # ) +
+  # Individual count labels for populations
+  geom_text(
+    aes(x = 1),
+    hjust = 1,
+    vjust = .5,
+    position = position_nudge(x = .035),
+    fontface = "bold",
+    family = "CMU Serif",
+    size = 4
+  ) +
+  scale_x_continuous(labels = scales::label_percent()) +
+  scale_fill_brewer(palette = "Dark2") +
+  # Styling
+  guides(
+    fill = guide_legend(
+      override.aes = list(shape = 21,
+                          size = 7,
+                          stroke = 1)
+    )
+  ) +
+  coord_cartesian(
+    clip = "off",
+    expand = F,
+    xlim = 0:1
+  ) +
+  labs(
+    x = latex2exp::TeX("$d_{IoU}$"),
+    y = NULL,
+    fill = "Geographical\nRegion"
+  ) +
+  theme(
+    legend.text = element_text(size = 11),
+    axis.text.y = element_text(hjust = 0),
+    axis.title.x = element_text(margin = margin(1, 0, 0, 0, "lines")),
+    axis.ticks = element_blank(),
+    title = element_text(size = 16),
+    panel.grid.major.y = element_line(colour = "gray75", linewidth = .25, linetype = "dashed"),
+    legend.box.margin = margin(1,1,1,1, "lines"),
+    legend.box.background = element_rect(colour = "black", linetype = "solid", linewidth = .55),
+    aspect.ratio = .7,
+    legend.position = c(.25, .75),
+    plot.margin = margin(0,30,0,0)
+  )
+
+ggsave(paste0("within_country_iou", file_suffix, ".pdf"), align_legend(within_country_iou),
+       device = cairo_pdf,
+       width = 4.5, height = 2.8, scale = 2.5)
+```
+
+```{r withinCountryDIoU}
+within_region_iou <- all_dmat %>% 
+  # Filter only comparisons within populations
+  # filter(region_1 == region_2) %>% 
+  mutate(
+    prs_1 = factor(prs_1),
+    prs_2 = factor(prs_2, levels(prs_1)),
+    region_1 = factor(ifelse(region_1 == region_2, region_1, "Between"), c(sort(unique(region_1)), "Between"))
+  ) %>% 
+  # Filter lower triangle of pairwise dIoU matrix
+  filter(as.integer(prs_1) < as.integer(prs_2)) %>% 
+  rename("region" = "region_1", "country" = "country_1", "pop" = "pop_1") %>% 
+  group_by(region) %>% 
+  # filter(sum(!is.na(iou)) > 2) %>% 
+  # (Stupid) way to calculate number of individuals, 
+  # could be replaced by length(unique(c(prs_1,prs_2)))
+  # mutate(n = ifelse(row_number() == 1, n(), NA),
+  #        n = lower_tri_base_width(n)) %>% 
+  mutate(n = ifelse(row_number() == 1, length(unique(c(prs_1,prs_2))), NA)) %>% 
+  ungroup %>% 
+  # Sort population by region in plot
+  arrange(region, country, pop) %>% 
+  mutate(across(c(country, pop), ~factor(.x, unique(.x)))) %>%
+  ggplot(aes(x = iou, 
+             y = region, 
+             fill = region, 
+             label = n)) +
+  # geom_boxplot(
+  #   key_glyph = draw_key_point,
+  #   linewidth = .4,
+  # ) +
+  geom_violin(
+    scale = "width",
+    key_glyph = draw_key_point
+  ) +
+  # Individual count labels for populations
+  geom_text(
+    aes(x = 1),
+    hjust = 1,
+    vjust = .5,
+    # adjust = .1,
+    position = position_nudge(x = -0.065),
+    fontface = "bold",
+    family = "CMU Serif",
+    size = 4
+  ) +
+  scale_x_continuous(labels = Vectorize(function(x) if (is.na(x)) "" else scales::label_percent()(x))(
+    c(0, NA, NA, .3, NA, NA, .6, .7, .8, .9, 1)
+  ),
+                     expand = expansion(),
+                     trans = invlog(10, .1, 1),
+                     breaks = seq(0, 1, .1),) +
+  scale_y_discrete(expand = expansion(0, .5)) +
+  scale_fill_brewer(palette = "Dark2") +
+  # Styling
+  guides(
+    fill = guide_legend(
+      override.aes = list(shape = 21,
+                          size = 7,
+                          stroke = 1)
+    )
+  ) +
+  coord_cartesian(
+    clip = "off",
+    xlim = 0:1
+  ) +
+  labs(
+    x = latex2exp::TeX("$d_{IoU}$"),
+    y = NULL,
+    fill = "Geographical\nRegion"
+  ) +
+  theme(
+    legend.text = element_text(size = 11),
+    axis.text.y = element_text(hjust = 0),
+    axis.title.x = element_text(margin = margin(1, 0, 0, 0, "lines")),
+    axis.ticks.y = element_blank(),
+    title = element_text(size = 16),
+    panel.grid.major.y = element_line(colour = "gray75", linewidth = .25, linetype = "dashed"),
+    legend.box.margin = margin(1,1,1,1, "lines"),
+    legend.box.background = element_rect(colour = "black", linetype = "solid", linewidth = .55),
+    aspect.ratio = 1,
+    legend.position = "none",
+    plot.margin = margin(0,20,0,0)
+  )
+
+ggsave(paste0("within_region_iou", file_suffix, ".pdf"), within_region_iou,
+       device = cairo_pdf,
+       width = 3, height = 2.45, scale = 2.5)
+```
 
 ## Summarized for regions
 ```{r allPairRegionSum}
+# Create a new heatmap of the dIoU matrix, aggregated for each combination of regions
 region_dmat <- all_dmat %>% 
   mutate(prs_1 = factor(prs_1),
-         prs_2 = factor(prs_2, levels = levels(prs_1))) %>% 
-  filter(as.integer(prs_1) < as.integer(prs_2)) %>% 
+         prs_2 = factor(prs_2, levels = levels(prs_1))) %>%
   group_by(same_region = region_1 == region_2, region_1, region_2) %>% 
   summarize(
-    iou = mean(iou),
+    iou = mean(iou[prs_1 != prs_2], na.rm = T),
     .groups = "drop"
   ) %>%
-  mutate(across(matches("^region"), ~str_replace_all(.x, "(?<!^)(?=[A-Z])", "-\n"))) %>% 
   ggplot(aes(region_1, region_2, fill = iou)) +
   geom_tile(aes(color = after_scale(fill)),
-            linewidth = 0) +
+            linewidth = .001) +
   scale_fill_viridis_c(option = "A",
                        direction = -1) +
   coord_equal(expand = F) +
-  labs(fill = "1 - IoU") +
+  labs(fill = latex2exp::TeX("$d_{IoU}$")) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
         axis.title = element_blank(),
         legend.title = element_text(hjust = .5,
@@ -462,7 +961,7 @@ region_dmat <- all_dmat %>%
         legend.key.width = unit(2, "lines"),
         legend.key.height = unit(4, "lines"))
 
-ggsave("region_dmat.pdf", region_dmat,
+ggsave(paste0("region_dmat", file_suffix, ".pdf"), align_legend(region_dmat),
        device = cairo_pdf,
        width = 4, height = 4, scale = 2.5)
 # region_dmat
@@ -474,6 +973,7 @@ and:
 
 ## Summarized for countries
 ```{r allPairCountrySum}
+# Create a new heatmap of the dIoU matrix, aggregated for each combination of countries
 country_dmat <- all_dmat %>% 
   arrange(region_1) %>% 
   mutate(prs_1 = factor(prs_1),
@@ -482,19 +982,17 @@ country_dmat <- all_dmat %>%
          country_2 = factor(country_2, levels(country_1))) %>%
   group_by(same_country = country_1 == country_2, country_1, country_2) %>% 
   summarize(
-    iou = mean(iou[prs_1 != prs_2]),
+    iou = mean(iou[prs_1 != prs_2], na.rm = T),
     .groups = "drop"
   ) %>% 
-  # mutate(across(matches("^country"), ~str_replace_all(.x, "(?<!^)(?=[A-Z])", "-\n"))) %>% 
   complete(country_1, country_2, fill = list(iou = NA)) %>% 
   ggplot(aes(country_1, country_2, fill = iou)) +
-  geom_tile(aes(color = after_scale(fill)),
-            linewidth = 0) +
+  geom_tile(aes(color = after_scale(fill))) +
   scale_fill_viridis_c(option = "A",
                        na.value = "gray75",
                        direction = -1) +
   coord_equal(expand = F) +
-  labs(fill = "1 - IoU") +
+  labs(fill = latex2exp::TeX("$d_{IoU}$")) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1),
         axis.title = element_blank(),
         legend.title = element_text(hjust = .5,
@@ -503,7 +1001,7 @@ country_dmat <- all_dmat %>%
         legend.key.width = unit(2, "lines"),
         legend.key.height = unit(4, "lines"))
 
-ggsave("country_dmat.pdf", country_dmat,
+ggsave(paste0("country_dmat", file_suffix, ".pdf"), country_dmat,
        device = cairo_pdf,
        width = 4, height = 4, scale = 2.5)
 # country_dmat
@@ -516,59 +1014,174 @@ And also used for post-hoc hierarchical clustering:
 
 ## Archaic state "phylogeny"
 ```{r allPairHierClust, fig.width = 12, fig.height = 12}
+# Prepare person metadata
 arch_meta <- arch_persons %>% 
   select(name, pop, country, region) %>% 
   arrange(region) %>% 
   mutate(country = factor(country, unique(country)))
 
+# Convert tidy pairwise dIoU matrix to a proper R-matrix
 all_t_dmat <- all_dmat %>% 
-  # filter(region_1 != "Melanesia" & region_2 != "Melanesia") %>% 
   arrange(country_1, country_2) %>% 
   mutate(
     prs_1 = factor(prs_1, unique(prs_1)),
     prs_2 = factor(prs_2, levels(prs_1))
   ) %>% 
-  # filter(region_1 != "Melanesia" & region_2 != "Melanesia") %>% 
   select(prs_1, prs_2, iou) %>%
-  pivot_wider(id_cols = prs_1, names_from = prs_2, values_from = iou) %>%
-  set_rownames(.$prs_1) %>%
+  # Convert to wide-format
+  pivot_wider(
+    id_cols = prs_1, 
+    names_from = prs_2, 
+    values_from = iou
+  ) %>%
   select(!prs_1) %>% 
+  # Convert to matrix
   as.matrix %>% 
-  as.dist
+  set_rownames(colnames(.)) %>% 
+  # Subtract 0.1% quantile 
+  subtract(quantile(.[lower.tri(.)], .001, na.rm = T)) %>% 
+  # Clamp to zero
+  {set_attributes(pmax(., 0), attributes(.))}
 
-all_tree <- all_t_dmat %>% 
-  # ape::nj()
-  hclust("ward.D2")
+# Compute a NJ tree on the dIoU matrix using `ape`
+all_tree <-  all_t_dmat %>% 
+  njs()
 
-all_cluster <- cutree(all_tree, 6) %>% 
+# Find the most divergent individual, used as an outgroup for rooting the NJ tree
+most_divergent_individual <- all_t_dmat %>% 
   {
-    tibble(label = names(.),
-           cluster = unname(.))
-  }
+    diag(.) <- NA
+    .
+  } %>% 
+  apply(1, mean, na.rm = T) %>% 
+  which.max %>% 
+  names
 
-hier_cluster_dmat <- as_tbl_graph(all_tree) %>% 
-  left_join(all_cluster) %>%
-  left_join(arch_meta, by = c(label = "name")) %>% 
-  ggraph() +
-  geom_edge_elbow(
-    position = position_nudge(y = .1)
+# Root the tree using the above-found outgroup
+all_tree_rooted <- all_tree %>% 
+  root(most_divergent_individual, resolve.root = T)
+
+# Convert the `ape`-phylo to a `tidygraph`-tbl_graph and re-attach person metadata
+all_tree_tidy <- all_tree_rooted  %>% 
+  as_tbl_graph() %>%
+  mutate(
+    leaf = node_is_leaf(),
+    root = node_is_root(),
+    height = node_distance_to(node_is_root(), "in", weights = length),
+    outgroup = name == most_divergent_individual
+  ) %>%
+  left_join(arch_meta)
+
+# Extract the maximum branch height, used for aligning the tip labels  
+max_divergence <- all_tree_tidy %>% 
+  filter(leaf) %>% 
+  pull(height) %>% 
+  max %>% 
+  multiply_by(1.05) 
+
+max_divergence <- max_divergence * 1.25
+
+# Plot the NJ-tree using `ggraph`
+hier_cluster_dmat <- all_tree_tidy %>% 
+  # Scale the branches by length
+  ggraph("dendrogram", height = height) +
+  # Plot edges as elbows (i.e. vertical-bend-horizontal-merge)
+  geom_edge_elbow(edge_width = .25) +
+  # Plot the outgroup leaf
+  geom_node_point(
+    aes(y = ifelse(outgroup,  y, NA)),
+    color = "firebrick",
+    shape = 16, size = 2) +
+  # Create a line from the outgroup leaf to it's corresponding square
+  geom_segment(
+    aes(y = ifelse(outgroup, y, NA),
+        yend = max_divergence * .975,
+        x = x,
+        xend = x),
+    color = "firebrick",
+    linetype = "dashed",
+    linewidth = .5
   ) +
-  geom_node_tile(aes(fill = factor(cluster), width = leaf),
-                 height = .05,
-                 color = "transparent") +
-  scale_fill_brewer(palette = "Set1",
-                    name = "Post-Hoc Cluster") +
-  new_scale_fill() +
-  geom_node_tile(aes(fill = country, width = leaf),
-                 height = .05,
-                 color = "transparent",
-                 position = position_nudge(y = .1)) +
-  scale_fill_discrete(name = "Country") 
+  # Plot a square above each leaf in a circle, coloured by the population of the leaf
+  geom_node_tile(
+    aes(fill = country, 
+        color = country,
+        width = leaf, 
+        y = max_divergence + max_divergence / 17.5),
+    height = max_divergence / 17.5,
+  ) +
+  # Plot the name of the population above the squares
+  geom_node_text(
+    aes(color = country, 
+        label = country,
+        y = ifelse(leaf, max_divergence + 2 * max_divergence / 22.5, NA), 
+        # Annoying text-rotation calculations
+        angle = 360 - x * 0.999 + 90 + 177 * ((x * 0.999) > 180),
+        # Text-justification has to be different on each side, since the text is flipped
+        hjust = (x * 0.999) > 180),
+    # Font-size is very small to avoid overlapping text
+    size = 2.5
+  ) +
+  scale_fill_discrete() +
+  scale_fill_discrete() +
+  ggnewscale::new_scale_fill() +
+  ggnewscale::new_scale_colour() +
+  # Plot a square above each leaf in a circle, coloured by the region of the leaf
+  geom_node_tile(
+    aes(fill = region, 
+        color = region,
+        width = leaf, 
+        y = max_divergence),
+    height = max_divergence / 17.5,
+  ) +
+  # Plot the name of the population above the squares
+  geom_node_text(
+    aes(color = region, 
+        label = region,
+        y = ifelse(leaf, max_divergence - max_divergence / 25, NA), 
+        # Annoying text-rotation calculations
+        angle = 360 - x * 0.999 + 90 + 177 * ((x * 0.999) > 180),
+        # Text-justification has to be different on each side, since the text is flipped
+        hjust = (x * 0.999) <= 180),
+    # Font-size is very small to avoid overlapping text
+    size = 2.5
+  ) +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_colour_brewer(palette = "Dark2") +
+  # Use polar coordinates; makes the dendrogram circular
+  # (I find this easier than using the built-in "circular" option in `ggraph`)
+  coord_polar() +
+  # Disable axis expansion (not completely necessary)
+  scale_x_continuous(expand = expansion()) +
+  scale_y_continuous(expand = expansion(), trans = "identity") +
+  # Styling
+  labs(
+    title = figure_annotation,
+    # title = latex2exp::TeX("Neighbour-Joining Tree of pairwise $d_{IoU}$ matrix"),
+    # caption = "<b>OBS:</b><br>* Rooted by using the individual with the lowest mean IoU (i.e. highest dIoU) as outgroup.\n The tip of the outgroup individual is marked by the red circle.<br>** Distances have been renormalized by subtracting the .1% quantile and clamping to 0."
+  ) +
+  theme(
+    legend.position = "none",
+    plot.caption = element_textbox_simple(
+      face = "plain",
+      size = 12,
+      hjust = 0,
+      color = "black",
+      box.color = "black",
+      linewidth = .5,
+      linetype = "solid",
+      fill = "gray85",
+      width = unit(40, "lines"),
+      padding = margin(1,1,1,1,"lines")
+    ),
+    plot.title = element_text(size = 48, hjust = 0.05, vjust = -10, margin = margin()),
+    plot.margin = margin(-2.5,-2,-1,-2, "cm")
+  )
 
-ggsave("hier_cluster_dmat.pdf", hier_cluster_dmat,
+ggsave(paste0("hier_cluster_dmat", file_suffix, ".pdf"), hier_cluster_dmat,
        device = cairo_pdf,
-       width = 7, height = 6, scale = 2.5)
-# theme(legend.position = "bottom")
+       width = 5.75, height = 5.5, scale = 2.5, dpi = 300)
+      # theme(legend.position = "bottom")
 ```
 \begin{figure}
   \includegraphics[width=\textwidth]{hier_cluster_dmat.pdf}
@@ -578,7 +1191,7 @@ ggsave("hier_cluster_dmat.pdf", hier_cluster_dmat,
 The pairwise distance matrix can also be ordinated using e.g. Principal Coordinate Analysis:
 ```{r allPairOrd}
 ord_data <- all_t_dmat %>% 
-  # umap() %>%
+  {.[!is.na(rowSums(.)), !is.na(colSums(.))]}  %>% 
   cmdscale(k = 4) %>%
   as.data.frame() %>%
   set_colnames(paste0("PCoA", 1:ncol(.))) %>%
@@ -592,35 +1205,45 @@ ord_data <- all_t_dmat %>%
 
 ord_plt <- ord_data %>% 
   ggplot(aes(.panel_x, .panel_y, color = region)) +
-  geom_point(size = 2,
-             alpha = .5,
-             shape = 16) +
-  geom_autodensity(aes(fill = after_scale(color)),
-                   linewidth = .75,
-                   alpha = .25) +
-  stat_density2d(aes(group = "1", fill = after_stat(ndensity)),
-                 colour = "transparent",
-                 contour = F,
-                 adjust = c(2,2),
-                 geom = "raster") +
-  facet_matrix(vars(contains("PCoA")),
-               layer.diag = 2,
-               layer.lower = 3,
-               shrink = F) +
+  geom_point(
+    size = 2,
+    alpha = .5,
+    shape = 16
+  ) +
+  geom_autodensity(
+    aes(fill = after_scale(color)),
+    linewidth = .75,
+    alpha = .25
+  ) +
+  stat_density2d(
+    aes(group = "1", fill = after_stat(ndensity)),
+    # colour = "transparent",
+    contour = F,
+    adjust = c(2,2),
+    geom = "raster"
+  ) +
+  facet_matrix(
+    vars(contains("PCoA")),
+    layer.diag = 2,
+    layer.lower = 3,
+    shrink = F
+  ) +
   scale_x_continuous(limits = c(-.5, .5), expand = expansion()) +
   scale_y_continuous(limits = c(-.5, .5), expand = expansion()) +
   scale_color_brewer(palette = "Set1") +
-  scale_fill_distiller(trans = "identity",
-                       palette = "Oranges",
-                       direction = 1,
-                       guide = "none") +
+  scale_fill_distiller(
+    trans = "identity",
+    palette = "Oranges",
+    direction = 1,
+    guide = "none"
+  ) +
   labs(color = "Geographical\nRegion") +
   coord_cartesian(expand = F) +
   guides(color = guide_legend(override.aes = list(alpha = 1,
                                                   size = 5))) +
   theme(panel.border = element_rect(fill = "transparent"))
 
-ggsave("ord_plt.pdf", ord_plt,
+ggsave(paste0("ord_plt", file_suffix, ".pdf"), ord_plt,
        device = cairo_pdf,
        width = 7, height = 6, scale = 2)
 ```
@@ -628,82 +1251,49 @@ ggsave("ord_plt.pdf", ord_plt,
   \includegraphics[width=\textwidth]{ord_plt.pdf}
 \end{figure}
 
+<!-- # Correlation between total archaic length and shared length -->
+<!-- ```{r lenDIoURelationship} -->
+<!-- library(mgcViz) -->
+<!-- library(metR) -->
 
-## EPAS1
-```{r}
-# filter(chrom == "2" & between(start, 46293667-10^6, 46386697+10^6) & between(end, 46293667-10^6, 46386697+10^6))
-```
+<!-- len_iou_2d_dat <- all_dmat %>%  -->
+<!--   rename_with(function(x) str_replace(x, "prs", "name")) %>%  -->
+<!--   left_join(arch_persons %>%  -->
+<!--               select(name, prs), by = c(name_1 = "name")) %>%  -->
+<!--   rename("prs_1" = "prs") %>%  -->
+<!--   left_join(arch_persons %>%  -->
+<!--               select(name, prs), by = c(name_2 = "name")) %>%  -->
+<!--   rename("prs_2" = "prs") %>%  -->
+<!--   mutate( -->
+<!--     name_1 = factor(name_1), -->
+<!--     name_2 = factor(name_2, levels(name_1)) -->
+<!--   ) %>%  -->
+<!--   filter(name_1 != name_2) %>%  -->
+<!--   # filter(as.integer(name_1) > as.integer(name_2)) %>%  -->
+<!--   mutate( -->
+<!--     across(contains("prs"), ~map_int(.x, function(x) {  -->
+<!--       sum(x$end - x$start) -->
+<!--     })), -->
+<!--     across(where(is.character), factor) -->
+<!--     # prs_2 = cut_width(prs_2, 500, 250, dig.lab = 50) -->
+<!--   ) -->
+
+<!-- len_iou_dat <- len_iou_2d_dat %>%  -->
+<!--   filter(prs_1 >= prs_2) %>%  -->
+<!--   distinct(comb = map2_chr(name_1, name_2, function(x, y) { -->
+<!--     paste0(sort(c(x,y)), collapse = "|") -->
+<!--   }), .keep_all = T) %>%  -->
+<!--   select(!comb) %>%  -->
+<!--   mutate(iou_max = 1- (pmin(prs_1, prs_2)/pmax(prs_1, prs_2))) %>% -->
+<!--   mutate(across(contains("iou"), ~ 1 - .x)) -->
 
 
-# Correlation between total archaic length and shared length
-```{r lenDIoURelationship}
-library(mgcViz)
-library(metR)
 
-len_iou_2d_dat <- all_dmat %>% 
-  rename_with(function(x) str_replace(x, "prs", "name")) %>% 
-  left_join(arch_persons %>% 
-              select(name, prs), by = c(name_1 = "name")) %>% 
-  rename("prs_1" = "prs") %>% 
-  left_join(arch_persons %>% 
-              select(name, prs), by = c(name_2 = "name")) %>% 
-  rename("prs_2" = "prs") %>% 
-  mutate(
-    name_1 = factor(name_1),
-    name_2 = factor(name_2, levels(name_1))
-  ) %>% 
-  filter(name_1 != name_2) %>% 
-  # filter(as.integer(name_1) > as.integer(name_2)) %>% 
-  mutate(
-    across(contains("prs"), ~map_int(.x, function(x) {
-      sum(x$end - x$start)
-    })),
-    across(where(is.character), factor)
-    # prs_2 = cut_width(prs_2, 500, 250, dig.lab = 50)
-  )
-
-pred_grid <- expand_grid(prs_1 = 10^seq(3, 5, .05),
-                         prs_2 = 10^seq(3, 5, .05))#unique(len_iou_2d_dat$prs_2))
-
-len_iou_plt <- len_iou_2d_dat %>% 
-  bam(iou ~ s(prs_1, prs_2, k = 100) + s(region_1, region_2, bs = "re"), data = .,
-      family = "quasibinomial", discrete = T) %>%
-  # getViz() %>% 
-  # check.gamViz()
-  predict(pred_grid %>% 
-            # filter(as.character(prs_2) %in% levels(len_iou_2d_dat$prs_2)) %>% 
-            mutate(region_1 = "WestEurasia",
-                   region_2 = "Melanesia"), 
-          exclude = "s(region_1)",
-          type = "response") %>% 
-  {
-    mutate(pred_grid, pred = .)
-  } %>% 
-  ggplot(aes(prs_1, prs_2)) +
-  geom_tile(aes(fill = pred)) +
-  geom_rug(data = len_iou_2d_dat %>% 
-             mutate(across(c(prs_1, prs_2), ~1000*round(.x/1000))) %>% 
-             count(prs_1, prs_2),
-           length = unit(0.015, "npc"),
-           alpha = .1,
-           aes(linewidth = n)) +
-  scale_x_log10(labels = prettify_scientific,
-                n.breaks = 8) +
-  scale_y_log10(labels = prettify_scientific,
-                n.breaks = 8) +
-  scale_fill_viridis_c(option = "A") +
-  coord_cartesian(expand = F) +
-  labs(x = "Person X", y = "Person Y", title = "Relationship between IoU and total amount of\n archaic heritage in the in the compared persons", fill = "1 - IoU",
-       caption = latex2exp::TeX("Only different pairs of individuals are included i.e. $d_{IoU}(X_i, Y_j)$ for $i > j$")) +
-  theme(
-    plot.caption = element_text(hjust = 0)
-  )
-
-ggsave("len_iou.pdf", len_iou_plt,
-       device = cairo_pdf,
-       width = 7, height = 6, scale = 2)
-```
-\begin{figure}
-  \includegraphics[width=\textwidth]{len_iou.pdf}
-\end{figure}
+<!-- ggsave(paste0("len_iou", file_suffix, ".pdf"), len_iou_plt, -->
+<!--        device = cairo_pdf, -->
+<!--        width = 7, height = 6, scale = 2) -->
+<!-- ``` -->
+<!-- \begin{figure} -->
+<!--   \includegraphics[width=\textwidth]{len_iou.pdf} -->
+<!-- \end{figure} -->
 

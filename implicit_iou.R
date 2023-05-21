@@ -85,20 +85,17 @@ tidy_segments <- function(p) {
   dfs <- p %>% 
     lapply(function(x) tibble(start = x$start, end = x$end))
   
-  # print(dfs)
-  
   tibble(
     person = if (is.null(names(p))) factor(1:length(p)) else factor(names(p)),
     breaks = dfs
   ) %>% 
-    # print %>% 
     unnest(breaks)
 }
 
 bit_vec_to_person <- function(v) {
   pos <- v %>% 
-    as.logical() %>% 
-    which  
+    as.which() %>% 
+    as.vector  
   
   pos_start <- which((pos - lag(pos, default = -10)) != 1)
   pos_end   <- which((lead(pos, default = length(v) + 10) - pos) != 1)
@@ -109,75 +106,3 @@ bit_vec_to_person <- function(v) {
     length = length(v)
   )
 }
-
-# # tprs_1 <- list(
-# #   start = c(1, 10, 15),
-# #   end = c(3, 11, 20),
-# #   length = 50
-# # )
-# # tprs_2 <- list(
-# #   start = c(4, 15, 19,30),
-# #   end = c(10, 17, 20, 50),
-# #   length = 50
-# # )
-# 
-# tprs_1 <- create_breaks(10^6, 1000, .1)
-# tprs_2 <- create_breaks(10^6, 10, .1)
-# 
-# implicit_iou(tprs_1, tprs_2) %>%
-#   # tidy_segments() %>%
-#   # ggplot(aes(y = person, yend = person,
-#   #            x = start, xend = end)) +
-#   # geom_segment(linewidth = 10)
-#   sapply(person_segment_length) %>% 
-#   {
-#     .["intersection"] / .["union"]
-#   }
-# 
-# bit_vec_iou(create_bit_vec(tprs_1, 1, type = "floor"), create_bit_vec(tprs_2, 1, type = "floor"))
-# 
-# list(intersection = create_bit_vec(tprs_1, 1, type = "floor") & create_bit_vec(tprs_1, 1, type = "floor"),
-#      union = create_bit_vec(tprs_1, 1, type = "floor") | create_bit_vec(tprs_1, 1, type = "floor")) %>% 
-#   lapply(bit_vec_to_person) %>% 
-#   tidy_segments() %>%
-#   mutate(type = "bit") %>% 
-#   bind_rows(
-#     implicit_iou(tprs_1, tprs_1) %>%
-#       tidy_segments() %>%
-#       mutate(type = "implicit")
-#   ) %>%
-#   group_by(person, start, end) %>%
-#   filter(n() != 2) %>%
-#   ungroup %>%
-#   mutate(length = end - start) %>%
-#   # ggplot(aes(length, person, fill = type)) +
-#   # geom_violin()
-#   mutate(person = as.integer(person),
-#          person = person + as.integer(factor(type))/4) %>% 
-#   ggplot(aes(ymin = person, ymax = person + .25,
-#              xmin = start, xmax = end,
-#              fill = type, group = paste0(color, type))) +
-#   geom_rect()
-# 
-# 
-# list(create_bit_vec(tprs_1, 1, type = "floor"), create_bit_vec(tprs_1, 1, type = "floor")) %>% 
-#   lapply(bit_vec_to_person) %>% 
-#   tidy_segments() %>%
-#   mutate(type = "bit") %>% 
-#   bind_rows(
-#     list(tprs_1, tprs_1) %>%
-#       tidy_segments() %>%
-#       mutate(type = "implicit")
-#   ) %>%
-#   group_by(person, start, end) %>%
-#   filter(n() != 2) %>%
-#   ungroup 
-#   mutate(length = end - start) %>%
-#   # ggplot(aes(length, person, fill = type)) +
-#   # geom_violin()
-#   mutate(person = as.integer(person),
-#          person = person + as.integer(factor(type))/4) %>% 
-#   ggplot(aes(ymin = person, ymax = person + .25,
-#              xmin = start, xmax = end,
-#              fill = type, group = paste0(color, type))) +
-#   geom_rect()

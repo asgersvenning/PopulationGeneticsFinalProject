@@ -1,0 +1,13 @@
+
+\begin{tabular}{lll}
+\toprule
+\multicolumn{1}{c}{\textbf{}} & \multicolumn{2}{c}{\textbf{Proportion of $d_mathrm{IoU}$ explained by}} \\
+\cmidrule(l{3pt}r{3pt}){2-3}
+\textbf{} & \textbf{Between} & \textbf{Within}\\
+\midrule
+Region & 53.11% & 22.19%\\
+Country & 0.10% & 0.22%\\
+Population & 0.06% & 0.11%\\
+Residuals & NA & 24.22%\\
+\bottomrule
+\end{tabular}
