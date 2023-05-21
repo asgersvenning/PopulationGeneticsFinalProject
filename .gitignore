@@ -2,6 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
+*.Rproj
 SNPs.txt
 ArchaicSegments.txt
 oai
