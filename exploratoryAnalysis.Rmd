@@ -97,7 +97,7 @@ figure_annotation <- str_remove(file_suffix, "^_") %>%
 if (figure_annotation == "Epas1") figure_annotation <- "EPAS1"
 
 
-precomputed <- if (precomputed != "force") file.exists(paste0("all_dmat", file_suffix, ".rds")) & precomputed else F
+precomputed <- if (precomputed != "force") file.exists(paste0("data/all_dmat", file_suffix, ".rds")) & precomputed else F
 
 epas1 <- F
 if (segment_type == 4) {

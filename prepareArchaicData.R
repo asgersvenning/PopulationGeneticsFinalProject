@@ -153,7 +153,7 @@ if (epas1) {
 ######### Compute pairwise dIoU matrix or load a precomputed one
 #########
 if (precomputed) {
-  all_dmat <- readRDS(paste0("all_dmat", file_suffix, ".rds"))
+  all_dmat <- readRDS(paste0("data/all_dmat", file_suffix, ".rds"))
 } else {
   time_used <- system.time(
     all_dmat <- arch_persons %>%
@@ -162,5 +162,5 @@ if (precomputed) {
       person_pairwise_dist_df("prs", "name", implicit = F)
   )
   
-  saveRDS(all_dmat, paste0("all_dmat", file_suffix, ".rds"))
+  saveRDS(all_dmat, paste0("data/all_dmat", file_suffix, ".rds"))
 }
