@@ -74,7 +74,7 @@ theme_set(
 ```{r hyperParams}
 precomputed <- T
 
-segment_type <- "epas" %>% 
+segment_type <- "all" %>% 
   tolower %>% 
   pmatch(c("altai", "denisova"   , "vindija", 
            "known", "neanderthal", "unknown", 
@@ -123,90 +123,51 @@ if (length(chromosome) == 1 && chromosome == "all") {
 }
 
 downscale <- if (!epas1) 1000 else 1
+
+source("prepareArchaicData.R")
 ```
 
 
 # Import data
 Filter lengths for positive lengths, since negative lengths are impossible. Negative lengths are probably present due to underflow in the bioinformatics pipeline prior to this analysis.
-```{r readData, eval = TRUE}
-arch_raw <- read_delim("ArchaicSegments.txt", delim = "\t", show_col_types = F) %>% 
-  filter(chrom %in% chromosome) %>% 
-  filter(length > 0) %>% 
-  mutate(country = str_extract(country, "[\\w ]+")) %>% 
-  nest(all = !c(region, country)) %>% 
-  group_by(country) %>% 
-  mutate(
-    country = paste0(country, rep("_", n()), region),
-    country = if (n() == 1) str_remove(country, "_.+") else country
-  ) %>% 
-  ungroup %>%
-  unnest(all) %>%
-  # Prettier region, country and population names
-  mutate(
-    region = str_replace_all(region, "(?<!^)(?=[A-Z])", "-"),
-    across(c(country, pop), ~.x %>% 
-             str_replace("_", " (") %>% 
-             str_replace("(?<= \\([\\w]{1,25})(?=(\\s|$))", ")")
-    )
-  ) %>% 
-  mutate(chrom = factor(chrom, unique(chrom)[order(as.numeric(unique(chrom)))])) %>% 
-  mutate(
-    primary_ancestry = apply(across(contains("Shared_with")), 1, which.max),
-    primary_ancestry = ifelse(
-      rowSums(across(contains("Shared_with"))) < ceiling(snps/2), 
-      0, primary_ancestry
-    )
-  )
-
-arch <- arch_raw %>% 
-  filter(primary_ancestry %in% segment_type)
-
-if (epas1) {
-  arch_person_sum <- arch %>% 
-    distinct(name, pop, country, region, .keep_all = T) %>% 
-    mutate(across(!c(name, pop, country, region), ~NA))
-  
-  arch <- arch %>% 
-    filter(chrom == "2" & between(start, 46293667-10^6, 46386697+10^6) & between(end, 46293667-10^6, 46386697+10^6)) %>% 
-    nest(dat = !name) %>%
-    mutate(name = factor(name, levels = arch_person_sum$name)) %>% 
-    complete(name) %>% 
-    mutate(dat = map2(dat, name, function(d, n) {
-      if (!is.null(d)) return(d)
-      
-      arch_person_sum[arch_person_sum$name == n, ] %>% 
-        select(!name)
-    })) %>% 
-    unnest(dat) %>% 
-    mutate(chrom = "2") %>% 
-    ungroup
-}
-```
 
 ```{r totalArchaicLength}
 arch_length_tot_plt <- arch %>% 
-    group_by(name, region) %>% 
-    summarize(
-        tot_len = sum(length)
-    ) %>% 
-    ggplot(aes(tot_len, fill = region)) +
-    geom_histogram(aes(color = after_scale(fill)),
-                   bins = 100,
-                   key_glyph = draw_key_point) +
-    scale_fill_brewer(palette = "Dark2") +
-    scale_x_continuous(labels = prettify_scientific,
-                       # breaks = seq(0, 350, 50) * 10^6
-                       ) +
-    coord_cartesian(expand = F) +
-    guides(fill = guide_legend(override.aes = list(shape = 21,
-                                                   size = 5))) +
-    theme(
-        aspect.ratio = .5,
-        legend.position = c(.75,.75),
-        legend.box.background = element_rect(colour = "black", linewidth = .5, linetype = "solid"),
-        legend.box.margin = margin(1,1,1,1)
-    ) +
-    labs(x = "Total Archaic Segment Length", y = NULL, fill = NULL)
+  mutate(
+    region = if (!epas1) region else {
+      ifelse(country == "Tibet", "Tibet", region) %>% 
+        factor(c(sort(unique(region)), "Tibet"))
+    }
+  ) %>% 
+  group_by(name, region) %>% 
+  summarize(
+    tot_len = sum(length)
+  ) %>% 
+  ggplot(aes(tot_len / ifelse(epas1, 10^3, 10^6), fill = region)) +
+  geom_histogram(
+    aes(color = after_scale(fill)),
+    bins = if (!epas1) 100 else 25,
+    key_glyph = draw_key_point
+  ) +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_x_continuous(
+    labels = function(x) prettify_scientific(format(x, scientific = F)),
+    breaks = if (!epas1) seq(0, 1000, 10) else seq(0, 1000, 50)
+  ) +
+  coord_cartesian(expand = F) +
+  guides(fill = guide_legend(
+    override.aes = list(shape = 21,
+                        size = 5))) +
+  theme(
+    aspect.ratio = .5,
+    legend.position = c(.75,.75),
+    legend.box.background = element_rect(colour = "black", 
+                                         linewidth = .5, 
+                                         linetype = "solid"),
+    legend.box.margin = margin(1,1,1,1),
+    axis.text.x = if (epas1) element_text() else element_text(size = 10)
+  ) +
+  labs(x = if (epas1) "Total Archaic Segment Length (in thousands, K)" else "Total Archaic Segment Length (in millions, M)", y = NULL, fill = NULL)
 
 ggsave(paste0("arch_length_total", file_suffix, ".pdf"), align_legend(arch_length_tot_plt),
        device = cairo_pdf,
@@ -395,106 +356,13 @@ I evaluate these different methods by randomly selecting two individuals and ext
 
 ## Prepare data
 Before doing analyses, I offset the genomic positions of the segments such that the indices in each chromosome start after the end of the previous chromosome 
-```{r prepareArch}
-all_chrom_range <- arch %>%
-  group_by(chrom) %>% 
-  summarize(
-    start = min(start, na.rm = T),
-    end = max(end, na.rm = T),
-    .groups = "drop"
-  ) %>% 
-  arrange(chrom) %>% 
-  mutate(
-    length = end - start,
-    offset = lag(cumsum(length), default = 0) #- first(length)
-  )
-
-if (nrow(all_chrom_range) == 1) {
-  all_chrom_summary <- as.list(all_chrom_range[-1]) %>% 
-    lapply(function(x) set_names(x, all_chrom_range$chrom))
-} else {
-  all_chrom_summary <- all_chrom_range %>% 
-    summarize(across(!chrom, ~list(set_names(.x, chrom)))) %>% 
-    as.list %>% 
-    lapply(first)
-}
-
-all_chrom_range %>% 
-  mutate(across(c(start, end), ~.x - start + 1 + offset)) %>% 
-  mutate(chrom = as.integer(chrom)) %>%
-  mutate(nchrom = lead(chrom),
-         nstart = lead(start)) %>% 
-  mutate(across(where(is.numeric), ~.x / downscale)) %>% 
-  ggplot() +
-  geom_segment(aes(chrom, start, xend = chrom, yend = end)) +
-  geom_segment(aes(chrom, end, xend = nchrom, yend = nstart)) +
-  scale_x_continuous(labels = levels(all_chrom_range$chrom), breaks = 1:length(levels(all_chrom_range$chrom)))
-
-
-arch_approx <- arch %>% 
-  group_by(chrom) %>%
-  mutate(
-    across(c(start, end), ~
-             .x 
-             - all_chrom_summary$start[as.character(first(chrom))] 
-             + all_chrom_summary$offset[as.character(first(chrom))] 
-             + 1)
-  ) %>%
-  ungroup %>% 
-  mutate(
-    across(c(start, end), ~.x / downscale),
-    start = ceiling(start),
-    end = floor(end)
-  ) %>%
-  mutate(length = end - start) %>% 
-  filter(length > 0 | (is.na(start) & is.na(end)))
-```
 
 I then combine all segments in each individual into a pseudo-class which is essentially a custom data structure, such that I can use custom-made functions that work on said data structure.
-```{r preparePersons}
-x_chrom_end_range <- arch_approx %>%
-  pull(end) %>% 
-  range(na.rm = T)
-
-x_chrom_start_range <- arch_approx %>% 
-  pull(start) %>% 
-  range(na.rm = T)
-
-x_chrom_min <- x_chrom_start_range[1]
-x_chrom_max <- x_chrom_end_range[2] - x_chrom_min + 1
-
-arch_approx <- arch_approx %>%
-  mutate(across(c(start, end), ~.x - x_chrom_min + 1))
-
-arch_persons <- arch_approx %>% 
-  group_by(name, pop, country, region) %>% 
-  arrange(start, end) %>% 
-  summarize(
-    prs = list(person(start, end, x_chrom_max)),
-    .groups = "drop"
-  ) %>% 
-  mutate(prs = prs %>% 
-           set_names(name))
-```
 Now that the data is prepared in a suitable data structure I can perform my analyses.
 
 
 ## Pairwise $d_\mathrm{IoU}$
 I then move on to using the full pairwise distance matrix, this would not be feasible without the explained optimizations. However using the methods described this can be done in a matter of seconds-to-minutes.
-```{r pairDIoU}
-if (precomputed) {
-  all_dmat <- readRDS(paste0("all_dmat", file_suffix, ".rds"))
-} else {
-  time_used <- system.time(
-    all_dmat <- arch_persons %>%
-      # slice_sample(n = 25) %>% 
-      mutate(prs = trim_non_overlapping_regions(prs)) %>%
-      person_pairwise_dist_df("prs", "name", implicit = F)
-  )
-  
-  saveRDS(all_dmat, paste0("all_dmat", file_suffix, ".rds"))
-}
-```
 
 ```{r}
 iou_hist <- all_dmat %>% 
@@ -554,16 +422,6 @@ And the full pairwise $d_\mathrm{IoU}$ matrix is computed in only `r time_used[3
 prs_to_country <- all_dmat %>% 
   distinct(country_1, prs_1) %>% 
   {set_names(.$country_1, .$prs_1)}
-
-if (epas1) {
-  epas_set <- arch_persons$prs %>% 
-    sapply(function(x) sapply(x, function(y) any(is.na(y)))) %>% 
-    colSums() %>% 
-    equals(0) %>% 
-    {names(.)[.]}
-} else {
-  epas_set <- c()
-}
 
 # Create heatmap of the entire pairwise dIoU matrix
 all_dmat_plt <- all_dmat %>%
@@ -1156,8 +1014,8 @@ hier_cluster_dmat <- all_tree_tidy %>%
   scale_y_continuous(expand = expansion(), trans = "identity") +
   # Styling
   labs(
-    title = figure_annotation,
-    # title = latex2exp::TeX("Neighbour-Joining Tree of pairwise $d_{IoU}$ matrix"),
+    # title = figure_annotation,
+    title = latex2exp::TeX("Neighbour-Joining Tree of the Full Pairwise $d_{IoU}$ Matrix"),
     # caption = "<b>OBS:</b><br>* Rooted by using the individual with the lowest mean IoU (i.e. highest dIoU) as outgroup.\n The tip of the outgroup individual is marked by the red circle.<br>** Distances have been renormalized by subtracting the .1% quantile and clamping to 0."
   ) +
   theme(
@@ -1174,13 +1032,15 @@ hier_cluster_dmat <- all_tree_tidy %>%
       width = unit(40, "lines"),
       padding = margin(1,1,1,1,"lines")
     ),
-    plot.title = element_text(size = 48, hjust = 0.05, vjust = -10, margin = margin()),
-    plot.margin = margin(-2.5,-2,-1,-2, "cm")
+    plot.title = element_text(size = 32),
+    plot.margin = margin(0,-.9,-1.75, -2, "cm")
+    # plot.title = element_text(size = 48, hjust = 0.05, vjust = -10, margin = margin()),
+    # plot.margin = margin(-2.5,-2,-1,-2, "cm")
   )
 
 ggsave(paste0("hier_cluster_dmat", file_suffix, ".pdf"), hier_cluster_dmat,
        device = cairo_pdf,
-       width = 5.75, height = 5.5, scale = 2.5, dpi = 300)
+       width = 5.75, height = 6.25, scale = 2.5, dpi = 300)
       # theme(legend.position = "bottom")
 ```
 \begin{figure}

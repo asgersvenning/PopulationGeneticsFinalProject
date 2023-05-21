@@ -7,3 +7,5 @@ ArchaicSegments.txt
 oai
 *_cache/*
 chatgpt_trolling.R
+*.bib
+*.html

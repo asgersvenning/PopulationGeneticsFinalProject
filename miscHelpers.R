@@ -61,11 +61,11 @@ label_grouped_axis <- function(map, min_size = 5, verbose = F) function(labels) 
     oldPar <- par(mfrow = c(2, 1))
     
     group %>%
-    factor(group_names) %>% 
-    as.integer %>%
-    mod(2) %>%
-    as.bit %>% 
-    plot(type = "s", main = "Before")
+      factor(group_names) %>% 
+      as.integer %>%
+      mod(2) %>%
+      as.bit %>% 
+      plot(type = "s", main = "Before")
   }
   
   groups_length <- groups$end - groups$start + 1
@@ -145,6 +145,7 @@ label_prettify_scientific <- function(parse, digits) {
     else {
       stop("Invalid format!")
     }
+    if (parts[1] == 0) return("0")
     out <- str_remove(out, "(?<=^\\$) \\\\times\\\\, ")
     if (parse) return(latex2exp::TeX(out)) else out
   })

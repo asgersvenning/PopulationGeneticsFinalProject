@@ -1,23 +1,26 @@
 
-\begin{tabular}{llllll}
-\toprule
-\multicolumn{1}{c}{} & \multicolumn{5}{c}{$Q_{\%50}(d_\mathrm{IoU})$} \\
-\cmidrule(l{3pt}r{3pt}){2-6}
-\textbf{Total Archaic Segment Length} & \textbf{West-Eurasia} & \textbf{South-Asia} & \textbf{East-Asia} & \textbf{Central-Asia-Siberia} & \textbf{Melanesia}\\
-\midrule
-{}[50M,75M] & 92.1\% (\textit{1372}) & 93.1\% (\textit{362}) & 94.7\% (\textit{295}) & 94.0\% (\textit{129}) & 95.9\% (\textit{53})\\
-(75M,100M] & 94.4\% (\textit{2803}) & 93.2\% (\textit{2686}) & 89.1\% (\textit{4913}) & 90.6\% (\textit{2159}) & 94.5\% (\textit{159})\\
-(100M,125M] & - (\textit{0}) & - (\textit{0}) & 86.8\% (\textit{820}) & 88.7\% (\textit{41}) & - (\textit{0})\\
-(125M,150M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0})\\
-(150M,175M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0})\\
-\addlinespace
-(175M,200M] & 95.9\% (\textit{34}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 76.7\% (\textit{707})\\
-(200M,225M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0})\\
-(225M,250M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 82.5\% (\textit{21})\\
-(250M,275M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 81.5\% (\textit{276})\\
-(275M,300M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 81.4\% (\textit{6})\\
-\addlinespace
-(300M,325M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 76.4\% (\textit{10})\\
-(325M,350M] & - (\textit{0}) & 95.7\% (\textit{8}) & - (\textit{0}) & - (\textit{0}) & 75.6\% (\textit{28})\\
-\bottomrule
-\end{tabular}
+	\begin{tabular}{cccccc}
+	\toprule
+	\multicolumn{1}{c}{} & \multicolumn{5}{c}{$Q_{\%50}(d_\mathrm{IoU})$} \\
+	\cmidrule(l{3pt}r{3pt}){2-6}
+	\makecell{\textbf{Total Archaic}\\\textbf{Segment Length}} & \textbf{West-Eurasia} & \textbf{South-Asia} & \textbf{East-Asia} & \textbf{Central-Asia-Siberia} & \textbf{Melanesia}\\
+	\midrule
+	{}[50M,\hspace{0.5cm}60M] & 92.7\% (\textit{21}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0})\\
+	(60M,\hspace{0.5cm}70M] & 91.7\% (\textit{300}) & 93.4\% (\textit{1}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0})\\
+	(70M,\hspace{0.5cm}80M] & 90.7\% (\textit{595}) & 92.6\% (\textit{45}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0})\\
+	(80M,\hspace{0.5cm}90M] & 89.1\% (\textit{6}) & 92.1\% (\textit{276}) & 88.7\% (\textit{78}) & 88.3\% (\textit{66}) & - (\textit{0})\\
+	(90M,\hspace{0.25cm}100M] & - (\textit{0}) & 92.0\% (\textit{3}) & 88.3\% (\textit{3003}) & 88.4\% (\textit{78}) & - (\textit{0})\\
+	\addlinespace
+	(100M, 110M] & - (\textit{0}) & - (\textit{0}) & 86.8\% (\textit{780}) & - (\textit{0}) & - (\textit{0})\\
+	(180M, 190M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 77.0\% (\textit{120})\\
+	(190M, 200M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 76.5\% (\textit{231})\\
+	(240M, 250M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 82.5\% (\textit{15})\\
+	(250M, 260M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 81.7\% (\textit{66})\\
+	\addlinespace
+	(260M, 270M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 81.1\% (\textit{45})\\
+	(270M, 280M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 80.3\% (\textit{10})\\
+	(310M, 320M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 75.9\% (\textit{6})\\
+	(320M, 330M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 76.6\% (\textit{6})\\
+	(330M, 340M] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 75.4\% (\textit{10})\\
+	\bottomrule
+	\end{tabular}
