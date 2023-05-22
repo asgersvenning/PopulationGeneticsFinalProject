@@ -1,21 +1,18 @@
 	\begin{tabular}{ccccccc}
 	\toprule
-	\multicolumn{1}{c}{} & \multicolumn{6}{c}{$Q_{\%50}(d_\mathrm{IoU})$} \\
+	\multicolumn{1}{c}{} & \multicolumn{6}{c}{$Q_{\%50}(d_\mathrm{IoU})$  (\textit{n})} \\
 	\cmidrule(l{3pt}r{3pt}){2-7}
 	\makecell{\textbf{Total Archaic}\\\textbf{Segment Length}} & \textbf{West-Eurasia} & \textbf{South-Asia} & \textbf{East-Asia} & \textbf{Tibet} & \textbf{Central-Asia-Siberia} & \textbf{Melanesia}\\
 	\midrule
-	{}[0,\hspace{0.75cm}50K] & 100.0\% (\textit{66}) & 100.0\% (\textit{28}) & 100.0\% (\textit{190}) & - (\textit{0}) & 100.0\% (\textit{10}) & 100.0\% (\textit{210})\\
-	(50K,\hspace{0.25cm}100K] & 91.9\% (\textit{45}) & 100.0\% (\textit{6}) & 100.0\% (\textit{91}) & - (\textit{0}) & 84.0\% (\textit{3}) & - (\textit{0})\\
-	(100K, 150K] & 56.0\% (\textit{10}) & 100.0\% (\textit{10}) & 88.5\% (\textit{78}) & - (\textit{0}) & 80.5\% (\textit{15}) & - (\textit{0})\\
-	(150K, 200K] & 82.3\% (\textit{10}) & 99.1\% (\textit{1}) & 100.0\% (\textit{45}) & - (\textit{0}) & 94.4\% (\textit{15}) & 29.6\% (\textit{1})\\
-	(200K, 250K] & - (\textit{0}) & 83.0\% (\textit{6}) & 85.1\% (\textit{36}) & 36.5\% (\textit{6}) & - (\textit{0}) & - (\textit{0})\\
+	{}[0,\hspace{1.25cm}0] & - (\textit{666}) & - (\textit{120}) & - (\textit{120}) & - (\textit{0}) & - (\textit{15}) & - (\textit{2080})\\
+	{}[1,\hspace{0.75cm}50K) & 100.0\% (\textit{66}) & 100.0\% (\textit{28}) & 100.0\% (\textit{190}) & - (\textit{0}) & 100.0\% (\textit{10}) & 100.0\% (\textit{210})\\
+	{}[50K,\hspace{0.25cm}100K) & 91.9\% (\textit{45}) & 100.0\% (\textit{6}) & 100.0\% (\textit{91}) & - (\textit{0}) & 84.0\% (\textit{3}) & - (\textit{0})\\
+	{}[100K, 150K) & 56.0\% (\textit{10}) & 100.0\% (\textit{10}) & 88.5\% (\textit{78}) & - (\textit{0}) & 80.5\% (\textit{15}) & - (\textit{0})\\
+	{}[150K, 200K) & 82.3\% (\textit{10}) & 99.1\% (\textit{1}) & 100.0\% (\textit{45}) & - (\textit{0}) & 94.4\% (\textit{15}) & 29.6\% (\textit{1})\\
 	\addlinespace
-	(250K, 300K] & - (\textit{0}) & - (\textit{0}) & 58.6\% (\textit{6}) & 32.2\% (\textit{6}) & - (\textit{0}) & - (\textit{0})\\
-	(300K, 350K] & - (\textit{0}) & - (\textit{0}) & 68.1\% (\textit{3}) & 65.6\% (\textit{10}) & - (\textit{0}) & - (\textit{0})\\
-	(350K, 400K] & - (\textit{0}) & - (\textit{0}) & 48.5\% (\textit{15}) & 70.6\% (\textit{3}) & - (\textit{0}) & - (\textit{0})\\
-	(400K, 450K] & - (\textit{0}) & - (\textit{0}) & 47.4\% (\textit{3}) & 39.3\% (\textit{10}) & - (\textit{0}) & - (\textit{0})\\
-	(450K, 500K] & - (\textit{0}) & - (\textit{0}) & 52.5\% (\textit{10}) & 52.9\% (\textit{1}) & - (\textit{0}) & - (\textit{0})\\
-	\addlinespace
-	(500K, 550K] & - (\textit{0}) & - (\textit{0}) & - (\textit{0}) & 53.9\% (\textit{1}) & - (\textit{0}) & - (\textit{0})\\
+	{}[200K, 300K) & 100.0\% (\textit{1}) & 83.0\% (\textit{6}) & 85.0\% (\textit{78}) & 30.0\% (\textit{28}) & - (\textit{0}) & - (\textit{0})\\
+	{}[300K, 400K) & - (\textit{0}) & - (\textit{0}) & 53.9\% (\textit{36}) & 60.4\% (\textit{28}) & - (\textit{0}) & - (\textit{0})\\
+	{}[400K, 500K) & - (\textit{0}) & - (\textit{0}) & 52.5\% (\textit{28}) & 45.3\% (\textit{21}) & - (\textit{0}) & - (\textit{0})\\
+	{}[500K, 600K) & - (\textit{0}) & - (\textit{0}) & 39.0\% (\textit{1}) & 53.9\% (\textit{1}) & - (\textit{0}) & - (\textit{0})\\
 	\bottomrule
 	\end{tabular}

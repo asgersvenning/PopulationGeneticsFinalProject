@@ -105,12 +105,21 @@ bit_vec_iou <- function(v1, v2, r) {
 }
 
 person <- function(start, end, length) {
-  merge_sec <- which((start + 1) == lag(end))
+  start <- sort(start)
+  end   <- sort(end)
+  # Ensure that segments are sorted and non-overlapping
+  stopifnot(all(sign(diff(start)) %in% 0:1))
+  stopifnot(all(sign(diff(end)) %in% 0:1))
+  
+  merge_sec <- which(lead(start + 1) <= end)
   if (length(merge_sec) != 0) {
-    start <- start[-merge_sec]
-    end <- end[-(merge_sec + 1)]
+    start <- start[-(merge_sec[1] + 1)]
+    end <- end[-merge_sec[1]]
+
+    # This is done recursively to be robust to multiply overlapping segments without overcomplicating the method
+    return(person(start, end, length))
   }
-  list(start = start, end = end, length = length)
+  return(list(start = start, end = end, length = length))
 }
 
 parallelLoop <- function(persons, vecs, dmat, pb, implicit, ...) {

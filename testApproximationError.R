@@ -66,8 +66,6 @@ bit_vec_iou_split <- function(p1, p2, split) {
   
   p1 <- split_person(p1, split)
   p2 <- split_person(p2, split)
-  print(str(p1))
-  print(str(p2))
   
   p1 <- lapply(p1, function(x) do.call(encode_binary_vector, x))
   p2 <- lapply(p2, function(x) do.call(encode_binary_vector, x))
@@ -79,10 +77,13 @@ bit_vec_iou_split <- function(p1, p2, split) {
   (int1 + int2) / (uni1 + uni2)
 } 
 
+# Before running this run the Hyperparameter cell in the Rmd with:
+# - d = 1
+# - segment_type = "all"
+# - chromosome = "all"
+
 # seed = 123, is used for the report (seed = 135 for two Papuans)
 set.seed(123)
-# tprs_1 <- create_breaks(10^7, 1000, .1)
-# tprs_2 <- create_breaks(10^7, 10, .1)
 tprs_ind <- sample(nrow(arch_persons), 2)
 tprs_1 <- arch_persons$prs[[tprs_ind[1]]]
 tprs_2 <- arch_persons$prs[[tprs_ind[2]]]
@@ -143,7 +144,7 @@ approxErrorPlt <- approxError %>%
                                 # 0, 
                                 .01, .05, .1, .2, .5, 1, 2, 5, 10),
                      limits = c(-.1, 2)) +
-  scale_color_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Set2") +
   coord_cartesian(expand = F) +
   guides(color = guide_legend(override.aes = list(shape = 16,
                                                   size = 5,
@@ -157,7 +158,7 @@ approxErrorPlt <- approxError %>%
     axis.title.y = element_textbox(orientation = "left-rotated",
                                    size = 18),
     axis.title.x = element_text(face = "bold",
-                              size = 18),
+                                size = 18),
     axis.text = element_text(size = 13),
     panel.grid.major.y = element_line(colour = "gray80", linetype = "dashed", linewidth = .25),
     legend.position = c(0.325, .75),

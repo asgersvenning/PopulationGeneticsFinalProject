@@ -142,7 +142,7 @@ arch_person_length <- arch_persons$prs %>%
 
 if (epas1) {
   epas_set <- arch_persons$prs %>% 
-    sapply(function(x) sapply(x, function(y) any(is.na(y)))) %>% 
+    sapply(function(x) sapply(x, function(y) length(y) == 0 | any(is.na(y)))) %>% 
     colSums() %>% 
     equals(0) %>% 
     {names(.)[.]}

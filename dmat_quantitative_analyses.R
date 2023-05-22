@@ -93,7 +93,7 @@ geo_anova %>%
  # Average IoU for individuals both with total segment lengths within a bin
 
 all_dmat %>% 
-  filter(!epas1 | (prs_1 %in% epas_set & prs_2 %in% epas_set)) %>% 
+  # filter(!epas1 | (prs_1 %in% epas_set & prs_2 %in% epas_set)) %>% 
   mutate(
     len_1 = arch_person_length[prs_1] * downscale,
     len_2 = arch_person_length[prs_2] * downscale
@@ -109,9 +109,23 @@ all_dmat %>%
     len = len_1,
     # len_1 = cut(len_1, breaks = scales::breaks_pretty(n = 30)(range(len)), dig.lab = 25),
     # len_2 = cut(len_2, breaks = scales::breaks_pretty(n = 30)(range(len)), dig.lab = 25)
-    len_1 = cut_width(len_1, {if (!epas1) 10000 else 50000} * downscale, boundary = 0, dig.lab = 25),
-    len_2 = cut_width(len_2, {if (!epas1) 10000 else 50000} * downscale, boundary = 0, dig.lab = 25)
-  ) %>%
+    across(c(len_1, len_2), function(x) {
+      if (!epas1) {
+        cut_width(len_1, 10000 * downscale, boundary = 1, dig.lab = 25) %>% 
+          fct_na_value_to_level("[0,0]") %>% 
+          fct_relabel(~str_replace_all(.x, "(?<=0)1", "0"))
+      }
+      else {
+        print("----------------")
+        print(sum(is.na(x)))
+        x[is.na(x)] <- 0
+        print(sum(is.na(x)))
+        print("----------------")
+        cut(x, c(0, 1, c(50, 100, 150, 200, 300, 400, 500, 600, 700, 800) * 10^3), dig.lab = 25, right = F) %>% 
+          fct_relabel(~ifelse(.x == "[0,1)", "[0,0]", .x))
+      }
+    })
+  ) %>% 
   filter(len_1 == len_2) %>%
   group_by(len_1, region_1) %>%
   summarize(
@@ -138,10 +152,11 @@ all_dmat %>%
   mutate(
     iou_n = str_replace(iou_n, "%", "\\\\%"),
     len_1 = if (!epas1) str_replace_all(len_1, "0{6}(?!0)", "M") else str_replace_all(len_1, "0{3}(?!0)", "K"),
-    len_1 = len_1 %>% 
+    len_1 = len_1 %>% # This looks very cursed, but it just left & right aligns the intervals
       str_replace("(?<=(\\(|\\[)\\d{2}[MK],)(?=\\d{3}[MK])", "\\\\hspace{0.25cm}") %>% 
       str_replace("(?<=(\\(|\\[)\\d{2}[MK],)(?=\\d{2}[MK])", "\\\\hspace{0.5cm}") %>% 
-      str_replace("(?<=(\\(|\\[)0,)", "\\\\hspace{0.75cm}") %>% 
+      str_replace("(?<=(\\(|\\[)[01],)(?=\\d{2}[MK])", "\\\\hspace{0.75cm}") %>% 
+      str_replace("(?<=(\\(|\\[)[01],)(?=0\\])", "\\\\hspace{1.25cm}") %>% 
       str_replace("(?<=(\\(|\\[)\\d{3}[MK],)", " "),
   ) %>% 
   mutate(
@@ -157,7 +172,7 @@ all_dmat %>%
         booktabs = T,
         escape = F,
         align = "c") %>%
-  add_header_above(c("", "$Q_{\\\\%50}(d_\\\\mathrm{IoU})$  (\textit{n})" = if (!epas1) 5 else 6), escape = F) %>% 
+  add_header_above(c("", "$Q_{\\\\%50}(d_\\\\mathrm{IoU})$  (\\\\textit{n})" = if (!epas1) 5 else 6), escape = F) %>% 
   as.character %>% 
   str_split("\\n") %>% 
   unlist %>% 

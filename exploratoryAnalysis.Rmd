@@ -72,9 +72,9 @@ theme_set(
 
 # Hyperparameters
 ```{r hyperParams}
-precomputed <- T
+precomputed <- F
 
-segment_type <- "all" %>% 
+segment_type <- "epas1" %>% 
   tolower %>% 
   pmatch(c("altai", "denisova"   , "vindija", 
            "known", "neanderthal", "unknown", 
@@ -880,7 +880,8 @@ arch_meta <- arch_persons %>%
 
 # Convert tidy pairwise dIoU matrix to a proper R-matrix
 all_t_dmat <- all_dmat %>% 
-  arrange(country_1, country_2) %>% 
+  filter(!epas1 | (prs_1 %in% epas_set & prs_2 %in% epas_set)) %>% 
+  arrange(region_1, region_2, country_1, country_2) %>% 
   mutate(
     prs_1 = factor(prs_1, unique(prs_1)),
     prs_2 = factor(prs_2, levels(prs_1))
@@ -903,6 +904,8 @@ all_t_dmat <- all_dmat %>%
 
 # Compute a NJ tree on the dIoU matrix using `ape`
 all_tree <-  all_t_dmat %>% 
+  # as.dist %>% 
+  # hclust("ward.D2")
   njs()
 
 # Find the most divergent individual, used as an outgroup for rooting the NJ tree
@@ -922,17 +925,26 @@ all_tree_rooted <- all_tree %>%
 # Convert the `ape`-phylo to a `tidygraph`-tbl_graph and re-attach person metadata
 all_tree_tidy <- all_tree_rooted  %>% 
   as_tbl_graph() %>%
+  # rename("name" = "label") %>% 
   mutate(
     leaf = node_is_leaf(),
     root = node_is_root(),
     height = node_distance_to(node_is_root(), "in", weights = length),
-    outgroup = name == most_divergent_individual
+    outgroup = name == most_divergent_individual,
+    cl = if (!epas1) NA else {
+      all_t_dmat %>% 
+        as.dist %>% 
+        hclust("ward.D2") %>% 
+        cutree(k = 8) %>% 
+        factor %>% 
+        extract(name)
+    }
   ) %>%
   left_join(arch_meta)
 
 # Extract the maximum branch height, used for aligning the tip labels  
 max_divergence <- all_tree_tidy %>% 
-  filter(leaf) %>% 
+  # filter(leaf) %>% 
   pull(height) %>% 
   max %>% 
   multiply_by(1.05) 
@@ -942,7 +954,7 @@ max_divergence <- max_divergence * 1.25
 # Plot the NJ-tree using `ggraph`
 hier_cluster_dmat <- all_tree_tidy %>% 
   # Scale the branches by length
-  ggraph("dendrogram", height = height) +
+  ggraph("dendrogram", height = if (!epas1 | TRUE) height else max(height) - height) +
   # Plot edges as elbows (i.e. vertical-bend-horizontal-merge)
   geom_edge_elbow(edge_width = .25) +
   # Plot the outgroup leaf
@@ -974,9 +986,9 @@ hier_cluster_dmat <- all_tree_tidy %>%
         label = country,
         y = ifelse(leaf, max_divergence + 2 * max_divergence / 22.5, NA), 
         # Annoying text-rotation calculations
-        angle = 360 - x * 0.999 + 90 + 177 * ((x * 0.999) > 180),
+        angle = 360 - x/max(x) * 360 + 90 + 180 * ((x/max(x) * 360) > 180),
         # Text-justification has to be different on each side, since the text is flipped
-        hjust = (x * 0.999) > 180),
+        hjust = (x/max(x) * 360) > 180),
     # Font-size is very small to avoid overlapping text
     size = 2.5
   ) +
@@ -986,26 +998,26 @@ hier_cluster_dmat <- all_tree_tidy %>%
   ggnewscale::new_scale_colour() +
   # Plot a square above each leaf in a circle, coloured by the region of the leaf
   geom_node_tile(
-    aes(fill = region, 
-        color = region,
+    aes(fill = if (!epas1 | T) region else cl, 
+        color = if (!epas1 | T) region else cl,
         width = leaf, 
         y = max_divergence),
     height = max_divergence / 17.5,
   ) +
   # Plot the name of the population above the squares
   geom_node_text(
-    aes(color = region, 
-        label = region,
+    aes(color = if (!epas1 | T) region else cl, 
+        label = if (!epas1 | T) region else cl,
         y = ifelse(leaf, max_divergence - max_divergence / 25, NA), 
         # Annoying text-rotation calculations
-        angle = 360 - x * 0.999 + 90 + 177 * ((x * 0.999) > 180),
+        angle = 360 - x/max(x) * 360 + 90 + 180 * ((x/max(x) * 360) > 180),
         # Text-justification has to be different on each side, since the text is flipped
-        hjust = (x * 0.999) <= 180),
+        hjust = (x/max(x) * 360) <= 180),
     # Font-size is very small to avoid overlapping text
     size = 2.5
   ) +
-  scale_fill_brewer(palette = "Dark2") +
-  scale_colour_brewer(palette = "Dark2") +
+  scale_fill_brewer(palette = if (!epas1) "Dark2" else "Set2") +
+  scale_colour_brewer(palette = if (!epas1) "Dark2" else "Set2") +
   # Use polar coordinates; makes the dendrogram circular
   # (I find this easier than using the built-in "circular" option in `ggraph`)
   coord_polar() +
@@ -1014,8 +1026,7 @@ hier_cluster_dmat <- all_tree_tidy %>%
   scale_y_continuous(expand = expansion(), trans = "identity") +
   # Styling
   labs(
-    # title = figure_annotation,
-    title = latex2exp::TeX("Neighbour-Joining Tree of the Full Pairwise $d_{IoU}$ Matrix"),
+    title = if (figure_annotation == "") latex2exp::TeX("Neighbour-Joining Tree of the Whole-Genome Pairwise $d_{IoU}$ Matrix") else figure_annotation,
     # caption = "<b>OBS:</b><br>* Rooted by using the individual with the lowest mean IoU (i.e. highest dIoU) as outgroup.\n The tip of the outgroup individual is marked by the red circle.<br>** Distances have been renormalized by subtracting the .1% quantile and clamping to 0."
   ) +
   theme(
@@ -1032,20 +1043,46 @@ hier_cluster_dmat <- all_tree_tidy %>%
       width = unit(40, "lines"),
       padding = margin(1,1,1,1,"lines")
     ),
-    plot.title = element_text(size = 32),
-    plot.margin = margin(0,-.9,-1.75, -2, "cm")
-    # plot.title = element_text(size = 48, hjust = 0.05, vjust = -10, margin = margin()),
-    # plot.margin = margin(-2.5,-2,-1,-2, "cm")
+    plot.title = if (figure_annotation == "") element_text(size = 32) else element_text(size = 48, hjust = 0.05, vjust = -10, margin = margin()),
+    plot.margin = if (figure_annotation == "") margin(0,-.9,-1.75, -2, "cm") else margin(-2,-0.5,-1,-1.5, "cm")
   )
 
 ggsave(paste0("hier_cluster_dmat", file_suffix, ".pdf"), hier_cluster_dmat,
        device = cairo_pdf,
        width = 5.75, height = 6.25, scale = 2.5, dpi = 300)
-      # theme(legend.position = "bottom")
+# theme(legend.position = "bottom")
 ```
-\begin{figure}
-  \includegraphics[width=\textwidth]{hier_cluster_dmat.pdf}
-\end{figure}
+
+```{r}
+all_tree_tidy %>% 
+  as_tibble() %>% 
+  filter(name %in% names(arch_person_length)) %>% 
+  mutate(
+    region = if (!epas1) region else ifelse(country == "Tibet", "Tibet", region)
+    ) %>%
+  mutate(
+    len = arch_person_length[name] * downscale
+  ) %>% 
+  ggplot(aes(len, height, color = if (!epas1) region else cl)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  scale_x_continuous(labels = prettify_scientific,
+                n.breaks = 10)   +
+  scale_color_brewer(palette = if (!epas1) "Dark2" else "Set3")
+
+all_tree_tidy %>% 
+  as_tibble() %>% 
+  filter(name %in% names(arch_person_length)) %>% 
+  mutate(region = if (!epas1) region else ifelse(country == "Tibet", "Tibet", region)) %>%
+  mutate(
+    len = arch_person_length[name] * downscale,
+    region = factor(region)
+  ) %>% 
+  bam(height ~ len + len:region + s(region, bs = "re"), data = .,
+      discrete = T) %>% 
+  summary
+```
+
 
 ## Low-dimensional ordination of archaic state dissimilarity
 The pairwise distance matrix can also be ordinated using e.g. Principal Coordinate Analysis:

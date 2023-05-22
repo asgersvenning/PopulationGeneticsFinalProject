@@ -37,9 +37,13 @@ downscale_person <- function(p, d) {
   p
 }
 
+# Before running this run the Hyperparameter cell in the Rmd with:
+# - d = 1
+# - segment_type = "all"
+# - chromosome = "all"
+
 set.seed(123)
-# tprs_1 <- create_breaks(10^7, 1000, .1)
-# tprs_2 <- create_breaks(10^7, 10, .1)
+
 tprs_ind <- sample(nrow(arch_persons), 2)
 tprs_1 <- arch_persons$prs[[tprs_ind[1]]]
 tprs_2 <- arch_persons$prs[[tprs_ind[2]]]
