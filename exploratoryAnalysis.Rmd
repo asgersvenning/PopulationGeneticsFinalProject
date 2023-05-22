@@ -72,9 +72,9 @@ theme_set(
 
 # Hyperparameters
 ```{r hyperParams}
-precomputed <- F
+precomputed <- T
 
-segment_type <- "epas1" %>% 
+segment_type <- "all" %>% 
   tolower %>% 
   pmatch(c("altai", "denisova"   , "vindija", 
            "known", "neanderthal", "unknown", 
@@ -439,7 +439,7 @@ all_dmat_plt <- all_dmat %>%
     country_fill_2 = ifelse(as.integer(country_2) %% 2 == 1, colorspace::lighten(country_fill_2, .5), country_fill_2)
   ) %>% 
   # Remove diagonal
-  mutate(iou = ifelse(prs_1 == prs_2, NA, iou)) %>% 
+  # mutate(iou = ifelse(prs_1 == prs_2, NA, iou)) %>% 
   ggplot() +
   # dIoU heatmap tiles
   geom_tile(
@@ -455,7 +455,11 @@ all_dmat_plt <- all_dmat %>%
     direction = -1,
     na.value = "gray75",
     labels = scales::label_percent(),
-    name = latex2exp::TeX("$d_{IoU}$")) +
+    name = latex2exp::TeX("$d_{IoU}$"),
+    limits = 0:1,
+    guide = guide_colorbar(
+      barwidth = 30, barheight = 2
+    )) +
   scale_color_viridis_c(
     option = "A",
     direction = -1,
@@ -505,13 +509,16 @@ all_dmat_plt <- all_dmat %>%
                                 size = 20),
     legend.text = element_text(size = 14),
     legend.key.width = unit(2, "lines"),
-    legend.key.height = unit(4, "lines")
+    legend.key.height = unit(4, "lines"),
+    legend.position = "bottom",
+    legend.box.margin = margin(0,0,0,-4, "lines"),
+    plot.margin = margin(1,2,0,0, "lines"),
   )
 
 # all_dmat_plt
 ggsave(paste0("all_dmat", file_suffix, ".pdf"), align_legend(all_dmat_plt),
        device = cairo_pdf, antialias = "subpixel",
-       width = 8, height = 7, dpi = 300, scale = 1)
+       width = 7, height = 8, dpi = 300, scale = 1)
 # all_dmat_plt
 ```
 \begin{figure}
@@ -979,6 +986,7 @@ hier_cluster_dmat <- all_tree_tidy %>%
         width = leaf, 
         y = max_divergence + max_divergence / 17.5),
     height = max_divergence / 17.5,
+    linewidth = .1
   ) +
   # Plot the name of the population above the squares
   geom_node_text(
@@ -1003,12 +1011,13 @@ hier_cluster_dmat <- all_tree_tidy %>%
         width = leaf, 
         y = max_divergence),
     height = max_divergence / 17.5,
+    linewidth = .1
   ) +
   # Plot the name of the population above the squares
   geom_node_text(
     aes(color = if (!epas1 | T) region else cl, 
         label = if (!epas1 | T) region else cl,
-        y = ifelse(leaf, max_divergence - max_divergence / 25, NA), 
+        y = ifelse(leaf, max_divergence - max_divergence / 27.5, NA), 
         # Annoying text-rotation calculations
         angle = 360 - x/max(x) * 360 + 90 + 180 * ((x/max(x) * 360) > 180),
         # Text-justification has to be different on each side, since the text is flipped
@@ -1048,8 +1057,8 @@ hier_cluster_dmat <- all_tree_tidy %>%
   )
 
 ggsave(paste0("hier_cluster_dmat", file_suffix, ".pdf"), hier_cluster_dmat,
-       device = cairo_pdf,
-       width = 5.75, height = 6.25, scale = 2.5, dpi = 300)
+       device = cairo_pdf, antialias = "default",
+       width = 5.75, height = 6.25, scale = 2.5, dpi = 1000)
 # theme(legend.position = "bottom")
 ```
 
